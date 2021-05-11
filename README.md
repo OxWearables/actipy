@@ -43,3 +43,21 @@ print(info)
 # ...
 
 ```
+
+## Installation
+
+Poor man's installation steps in Linux:
+
+```bash
+# Clone repository
+git clone https://github.com/activityMonitoring/pywear.git /path/to/pywear
+
+# Export the repo path to a PYWEARPATH system variable, required by Pywear
+echo export PYWEARPATH="$HOME/path/to/pywear" >> ~/.bashrc
+
+# Make repo path visible to Python
+echo export PYTHONPATH="$PYWEARPATH:$PYTHONPATH" >> ~/.bashrc
+```
+
+### Dependencies
+An anaconda installation should cover most of the dependencies. One special package required is [`JPype`](https://jpype.readthedocs.io/en/devel/install.html) which allows interfacing with Java (in which the core parsing code is written).
