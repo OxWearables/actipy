@@ -88,7 +88,7 @@ def _read_device(input_file, verbose=True):
         raise ValueError(f"Unknown file format {input_file}")
 
     # Convert the Java HashMap object to Python dictionary
-    info_parse = {k: str(info_parse[k]) for k in info_parse}
+    info_parse = {str(k): str(info_parse[k]) for k in info_parse}
     info_parse['readOK'] = int(info_parse['readOK'])
     info_parse['readErrors'] = int(info_parse['readErrors'])
     info_parse['sampleRate'] = float(info_parse['sampleRate'])
