@@ -11,8 +11,7 @@ data, info = pywear.read_device("/path/to/data/sample.cwa",
                                  calibrate_gravity=True,
                                  detect_nonwear=True)
 
-print(data)
-# Output (pandas.DataFrame)
+# data [pandas.DataFrame]
 #                                 x         y         z          T
 # time
 # 2014-05-07 13:29:50.430 -0.514335  0.069683  1.674354  20.000000
@@ -22,8 +21,7 @@ print(data)
 # 2014-05-07 13:29:50.470 -0.105261 -0.836652 -0.641269  20.000000
 # ...                           ...       ...       ...        ...
 
-print(info)
-# Output  (dictionary)
+# info [dict]
 # filename              : data/sample.cwa
 # filesize(MB)          : 209
 # deviceID              : 1020
