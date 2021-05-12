@@ -23,28 +23,40 @@ def read_device(input_file,
                 check_quality=False,
                 verbose=True):
 
+    info = {}
+
+    # Basic info
+    info['filename'] = input_file
+    info['filesize(MB)'] = int(round(os.path.getsize(input_file) / (1024*1024), 0))
+    info['args'] = {
+        'regularize_sample_rate': regularize_sample_rate,
+        'calibrate_gravity': calibrate_gravity,
+        'detect_nonwear': detect_nonwear,
+        'check_quality': check_quality,
+        'verbose': verbose
+    }
+
     data, info_read = _read_device(input_file, verbose)
     data = npy2df(data)
 
+    info_resample = {}
     if regularize_sample_rate:
         data, info_resample = processing.regularize_sample_rate(data, info_read['sampleRate'])
-    else:
-        info_resample = {'resampled': 0}
 
+    info_calib, info_nonwear = {}, {}
     if calibrate_gravity or detect_nonwear:
         stationary_indicator = processing.get_stationary_indicator(data)
 
         if calibrate_gravity:
             data, info_calib = processing.calibrate_gravity(data, stationary_indicator=stationary_indicator)
-        else:
-            info_calib = {'calibrated': 0}
 
         if detect_nonwear:
             data, info_nonwear = processing.detect_nonwear(data, stationary_indicator=stationary_indicator)
-        else:
-            info_nonwear = {'detectNonwear': 0}
 
-    info = {**info_read, **info_resample, **info_calib, **info_nonwear}
+    info.update({**info_read,
+                 **info_resample,
+                 **info_calib,
+                 **info_nonwear})
 
     return data, info
 
@@ -52,6 +64,8 @@ def read_device(input_file,
 def _read_device(input_file, verbose=True):
 
     before = time.time()
+
+    info = {}
 
     # Setup
     setupJVM()
@@ -62,12 +76,6 @@ def _read_device(input_file, verbose=True):
     if verbose:
         print("Decompressing...", end="\r")
     input_file_decompr = check_and_decompr(input_file, target_dir=tmpdir)
-
-    # Basic file info
-    info = {}
-    info['filename'] = input_file
-    info['filesize(MB)'] = int(round(os.path.getsize(input_file) / (1024*1024), 0))
-    info['deviceID'] = get_device_id(input_file_decompr)
 
     # Parsing
     if verbose:
@@ -86,6 +94,9 @@ def _read_device(input_file, verbose=True):
 
     else:
         raise ValueError(f"Unknown file format {input_file}")
+
+    # Device ID
+    info['deviceID'] = get_device_id(input_file_decompr)
 
     # Convert the Java HashMap object to Python dictionary
     info_parse = {str(k): str(info_parse[k]) for k in info_parse}

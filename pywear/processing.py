@@ -29,8 +29,9 @@ def timer(msg):
 def regularize_sample_rate(data, sample_rate):
     """ Fix potentially irregular sampling rate of the device """
 
-    info = {'resampled': 1,
-            'numTicksBeforeResample': len(data)}
+    info = {}
+
+    info['numTicksBeforeResample'] = len(data)
 
     # Create a new index with regular sampling rate
     # Start and end times are rounded to seconds so that the number of ticks
@@ -53,7 +54,7 @@ def regularize_sample_rate(data, sample_rate):
 def detect_nonwear(data, patience='90m', stationary_indicator=None, drop=True):
     """ Detect nonwear episodes based on long durations of no movement """
 
-    info = {'detectNonwear': 1}
+    info = {}
 
     if stationary_indicator is None:
         stationary_indicator = get_stationary_indicator(data)
@@ -138,7 +139,7 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
     # need at least one point outside each face of the cube
     if (np.max(xyz, axis=0) < calib_cube).any() \
         or (np.min(xyz, axis=0) > -calib_cube).any():
-        info['calibrated'] = 0
+        info['calibOK'] = 0
         info['calibErrorAfter(mg)'] = init_err * 1000
 
         return data, info
@@ -192,7 +193,7 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
     info['calibErrorAfter(mg)'] = best_err * 1000
 
     if best_err > ERR_TOL:
-        info['calibrated'] = 0
+        info['calibOK'] = 0
 
         return data, info
 
@@ -206,7 +207,7 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
                             # + best_slopeT * (data['T'].to_numpy()[:,None]-Tref))
                             + best_slopeT * (data['T'].to_numpy()[:,None]))
 
-        info['calibrated'] = 1
+        info['calibOK'] = 1
         info['calibNumIters'] = it+1
         info['calibNumSamples'] = len(xyz)
         info['calibxIntercept'] = best_intercept[0]
