@@ -6,7 +6,7 @@ import statsmodels.api as sm
 import functools
 
 
-__all__ = ['regularize_sample_rate', 'detect_nonwear', 'calibrate_gravity', 'get_stationary_indicator']
+__all__ = ['resample', 'detect_nonwear', 'calibrate_gravity', 'get_stationary_indicator']
 
 
 def timer(msg):
@@ -25,17 +25,20 @@ def timer(msg):
     return inner
 
 
-@timer(msg="Regularizing sample rate... ")
-def regularize_sample_rate(data, sample_rate):
-    """ Fix potentially irregular sampling rate of the device """
+@timer(msg="Resampling... ")
+def resample(data, sample_rate):
+    """ Resample data to sample_rate. This uses simple nearest neighbor
+    resampling, so should only be used for sample_rate near the data's
+    original sample rate. For sample_rate that is far from the original
+    rate, resampling with antialiasing filters should be done instead. """
 
     info = {}
 
     info['numTicksBeforeResample'] = len(data)
 
-    # Create a new index with regular sampling rate
+    # Create a new index with intended sample_rate
     # Start and end times are rounded to seconds so that the number of ticks
-    # (periods) can be roundly derived from the sample_rate
+    # (periods) can be roundly derived from sample_rate
     start = data.index[0].round('S')
     end = data.index[-1].round('S')
     periods = int((end - start).total_seconds() * sample_rate + 1)  # +1 for the last tick

@@ -17,7 +17,7 @@ __all__ = ['read_device']
 
 
 def read_device(input_file,
-                regularize_sample_rate=False,
+                resample_uniform=False,
                 calibrate_gravity=False,
                 detect_nonwear=False,
                 check_quality=False,
@@ -29,7 +29,7 @@ def read_device(input_file,
     info['filename'] = input_file
     info['filesize(MB)'] = int(round(os.path.getsize(input_file) / (1024*1024), 0))
     info['args'] = {
-        'regularize_sample_rate': regularize_sample_rate,
+        'resample_uniform': resample_uniform,
         'calibrate_gravity': calibrate_gravity,
         'detect_nonwear': detect_nonwear,
         'check_quality': check_quality,
@@ -40,18 +40,22 @@ def read_device(input_file,
     data = npy2df(data)
 
     info_resample = {}
-    if regularize_sample_rate:
-        data, info_resample = processing.regularize_sample_rate(data, info_read['sampleRate'])
+    if resample_uniform:
+        data, info_resample = processing.resample(data, info_read['sampleRate'])
 
-    info_calib, info_nonwear = {}, {}
+    # Used for calibration and nonwear detection
+    # If needed, compute it once as it's expensive
+    stationary_indicator = None
     if calibrate_gravity or detect_nonwear:
         stationary_indicator = processing.get_stationary_indicator(data)
 
-        if calibrate_gravity:
-            data, info_calib = processing.calibrate_gravity(data, stationary_indicator=stationary_indicator)
+    info_calib = {}
+    if calibrate_gravity:
+        data, info_calib = processing.calibrate_gravity(data, stationary_indicator=stationary_indicator)
 
-        if detect_nonwear:
-            data, info_nonwear = processing.detect_nonwear(data, stationary_indicator=stationary_indicator)
+    info_nonwear = {}
+    if detect_nonwear:
+        data, info_nonwear = processing.detect_nonwear(data, stationary_indicator=stationary_indicator)
 
     info.update({**info_read,
                  **info_resample,
