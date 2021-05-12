@@ -54,7 +54,7 @@ def resample(data, sample_rate):
 
 
 @timer(msg="Nonwear detection...")
-def detect_nonwear(data, patience='90m', stationary_indicator=None, drop=True):
+def detect_nonwear(data, patience='90m', stationary_indicator=None, drop=False):
     """ Detect nonwear episodes based on long durations of no movement """
 
     info = {}
