@@ -37,30 +37,16 @@ def read_device(input_file,
     }
 
     data, info_read = _read_device(input_file, verbose)
-    data = npy2df(data)
+    data = npy2df(data)  # to pandas dataframe
+    info.update(info_read)
 
-    info_resample = {}
-    if resample_uniform:
-        data, info_resample = processing.resample(data, info_read['sampleRate'])
-
-    # Used for calibration and nonwear detection
-    # If needed, compute it once as it's expensive
-    stationary_indicator = None
-    if calibrate_gravity or detect_nonwear:
-        stationary_indicator = processing.get_stationary_indicator(data)
-
-    info_calib = {}
-    if calibrate_gravity:
-        data, info_calib = processing.calibrate_gravity(data, stationary_indicator=stationary_indicator)
-
-    info_nonwear = {}
-    if detect_nonwear:
-        data, info_nonwear = processing.detect_nonwear(data, stationary_indicator=stationary_indicator)
-
-    info.update({**info_read,
-                 **info_resample,
-                 **info_calib,
-                 **info_nonwear})
+    data, info_process = _process(data, info,
+                                  resample_uniform=resample_uniform,
+                                  calibrate_gravity=calibrate_gravity,
+                                  detect_nonwear=detect_nonwear,
+                                  check_quality=check_quality,
+                                  verbose=verbose)
+    info.update(info_process)
 
     return data, info
 
@@ -115,6 +101,36 @@ def _read_device(input_file, verbose=True):
 
     if verbose:
         print(f"Reading file... Done! ({time.time()-before:.2f}s)")
+
+    return data, info
+
+
+def _process(data, info_data,
+             resample_uniform=False,
+             calibrate_gravity=False,
+             detect_nonwear=False,
+             check_quality=False,
+             verbose=False):
+
+    info = {}
+
+    if resample_uniform:
+        data, info_resample = processing.resample(data, info_data['sampleRate'])
+        info.update(info_resample)
+
+    # Used for calibration and nonwear detection
+    # If needed, compute it once as it's expensive
+    stationary_indicator = None
+    if calibrate_gravity or detect_nonwear:
+        stationary_indicator = processing.get_stationary_indicator(data)
+
+    if calibrate_gravity:
+        data, info_calib = processing.calibrate_gravity(data, stationary_indicator=stationary_indicator)
+        info.update(info_calib)
+
+    if detect_nonwear:
+        data, info_nonwear = processing.detect_nonwear(data, stationary_indicator=stationary_indicator)
+        info.update(info_nonwear)
 
     return data, info
 
