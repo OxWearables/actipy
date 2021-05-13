@@ -33,7 +33,6 @@ def read_device(input_file,
         'calibrate_gravity': calibrate_gravity,
         'detect_nonwear': detect_nonwear,
         'check_quality': check_quality,
-        'verbose': verbose
     }
 
     data, info_read = _read_device(input_file, verbose)
