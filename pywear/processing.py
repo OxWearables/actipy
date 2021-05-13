@@ -70,7 +70,7 @@ def detect_nonwear(data, patience='90m', stationary_indicator=None, drop=False):
     nonwear_len = stationary_len[stationary_len > pd.Timedelta(patience)]
 
     info['numNonWearEpisodes'] = len(nonwear_len)
-    info['nonwearOverall(days)'] = nonwear_len.sum().total_seconds() / (60*60*24)
+    info['nonwearOverall(days)'] = nonwear_len.sum().total_seconds() / (60 * 60 * 24)
 
     # Flag nonwear
     nonwhere_indicator = group.isin(nonwear_len.index)
@@ -100,7 +100,7 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
 
     hasT = 'T' in stationary_data
 
-    xyz = stationary_data[['x','y','z']].to_numpy()
+    xyz = stationary_data[['x', 'y', 'z']].to_numpy()
     # Remove any nonzero vectors as they cause nan issues
     nonzero = np.linalg.norm(xyz, axis=1) > 1e-8
     xyz = xyz[nonzero]
@@ -126,7 +126,7 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
     curr = xyz
     target = curr / np.linalg.norm(curr, axis=1, keepdims=True)
 
-    errors = np.linalg.norm(curr-target, axis=1)
+    errors = np.linalg.norm(curr - target, axis=1)
     # err = np.sqrt(np.mean(np.square(errors)))  # root mean square error (RMSE)
     err = np.median(errors)  # MAE more robust than RMSE. This is different from the paper
     init_err = err
@@ -141,7 +141,7 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
     # Check that we have sufficiently uniformly distributed points:
     # need at least one point outside each face of the cube
     if (np.max(xyz, axis=0) < calib_cube).any() \
-        or (np.min(xyz, axis=0) > -calib_cube).any():
+            or (np.min(xyz, axis=0) > -calib_cube).any():
         info['calibOK'] = 0
         info['calibErrorAfter(mg)'] = init_err * 1000
 
@@ -151,14 +151,14 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
 
         # Weighting. Outliers are zeroed out
         # This is different from the paper
-        maxerr = err + 1.5*stats.iqr(errors)
-        weights = np.maximum(1-errors/maxerr, 0)
+        maxerr = err + 1.5 * stats.iqr(errors)
+        weights = np.maximum(1 - errors / maxerr, 0)
 
         # Optimize params for each axis
         for k in range(3):
 
-            inp = curr[:,k]
-            out = target[:,k]
+            inp = curr[:, k]
+            out = target[:, k]
             if hasT:
                 inp = np.column_stack((inp, dT))
             inp = sm.add_constant(inp, prepend=True)  # add intercept term
@@ -175,14 +175,14 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
         # Update current solution and target
         curr = intercept + (xyz * slope)
         if hasT:
-            curr = curr + (dT[:,None] * slopeT)
+            curr = curr + (dT[:, None] * slopeT)
         target = curr / np.linalg.norm(curr, axis=1, keepdims=True)
 
         # Update errors
-        errors = np.linalg.norm(curr-target, axis=1)
+        errors = np.linalg.norm(curr - target, axis=1)
         # err = np.sqrt(np.mean(np.square(errors)))
         err = np.median(errors)
-        err_improv = (best_err-err)/best_err
+        err_improv = (best_err - err) / best_err
 
         if err < best_err:
             best_intercept = np.copy(intercept)
@@ -203,15 +203,15 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
     else:
         # Calibrate
         data = data.copy()
-        data[['x','y','z']] = (best_intercept
-                            + best_slope * data[['x','y','z']].to_numpy())
+        data[['x', 'y', 'z']] = (best_intercept
+                                 + best_slope * data[['x', 'y', 'z']].to_numpy())
         if hasT:
-            data[['x','y','z']] = (data[['x','y','z']]
-                            # + best_slopeT * (data['T'].to_numpy()[:,None]-Tref))
-                            + best_slopeT * (data['T'].to_numpy()[:,None]))
+            data[['x', 'y', 'z']] = (data[['x', 'y', 'z']]
+                                     # + best_slopeT * (data['T'].to_numpy()[:,None]-Tref))
+                                     + best_slopeT * (data['T'].to_numpy()[:, None]))
 
         info['calibOK'] = 1
-        info['calibNumIters'] = it+1
+        info['calibNumIters'] = it + 1
         info['calibNumSamples'] = len(xyz)
         info['calibxIntercept'] = best_intercept[0]
         info['calibyIntercept'] = best_intercept[1]
@@ -229,10 +229,10 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
 
 
 @timer(msg="Getting stationary points...")
-def get_stationary_indicator(data, window='10s', stdtol=15/1000):
+def get_stationary_indicator(data, window='10s', stdtol=15 / 1000):
     """ Return a boolean column indicating stationary points """
 
-    stationary_indicator = ((data[['x','y','z']]
+    stationary_indicator = ((data[['x', 'y', 'z']]
                             .rolling(window)
                             .std()
                             < stdtol

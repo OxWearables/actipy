@@ -22,12 +22,14 @@ def read_device(input_file,
                 detect_nonwear=False,
                 check_quality=False,
                 verbose=True):
+    """ Read and process device file. Returns a pandas.DataFrame with the
+    processed data, and a dict with processing and general info. """
 
     info = {}
 
     # Basic info
     info['filename'] = input_file
-    info['filesize(MB)'] = int(round(os.path.getsize(input_file) / (1024*1024), 0))
+    info['filesize(MB)'] = int(round(os.path.getsize(input_file) / (1024 * 1024), 0))
     info['args'] = {
         'resample_uniform': resample_uniform,
         'calibrate_gravity': calibrate_gravity,
@@ -51,6 +53,10 @@ def read_device(input_file,
 
 
 def _read_device(input_file, verbose=True):
+    """ Internal function that interfaces with the Java parser to read the
+    device file. Returns a numpy memmap with the parsed data, and a dict with
+    general info.
+    """
 
     before = time.time()
 
@@ -110,6 +116,7 @@ def _process(data, info_data,
              detect_nonwear=False,
              check_quality=False,
              verbose=False):
+    """ Internal helper function to process data """
 
     info = {}
 
@@ -148,6 +155,7 @@ def setupJVM():
 
 
 def check_and_decompr(filepath, target_dir):
+    """ Decompress file if necessary and check extension is correct """
 
     # Only .gz and .zip supported so far
     if filepath.lower().endswith((".gz", ".zip")):
@@ -187,6 +195,9 @@ def make_tmpdir():
 
 
 def npy2df(data):
+    """ Convert numpy array to pandas dataframe.
+    Also parse time and set it as index. """
+
     before = time.time()
     print("Converting to pandas dataframe...", end=" ", flush=True)
     data = pd.DataFrame(data)
@@ -218,7 +229,7 @@ def get_axivity_id(cwafile):
     """ Get serial number of Axivity device """
 
     if cwafile.lower().endswith('.gz'):
-        f = gzip.open(cwafile,'rb')
+        f = gzip.open(cwafile, 'rb')
     else:
         f = open(cwafile, 'rb')
 
@@ -241,9 +252,9 @@ def get_genea_id(binfile):
 
     assert binfile.lower().endswith(".bin"), f"Cannot get device id for {binfile}"
 
-    with open(binfile, 'r') as f: # 'Universal' newline mode
-        next(f) # Device Identity
-        device_id = next(f).split(':')[1].rstrip() # Device Unique Serial Code:011710
+    with open(binfile, 'r') as f:  # 'Universal' newline mode
+        next(f)  # Device Identity
+        device_id = next(f).split(':')[1].rstrip()  # Device Unique Serial Code:011710
 
     return device_id
 
@@ -256,17 +267,13 @@ def get_gt3x_id(gt3xfile):
 
     with zipfile.ZipFile(gt3xfile, 'r') as z:
         contents = z.infolist()
-        # print("\n".join(map(lambda x: str(x.filename).rjust(20, " ") + ", " + str(x.file_size), contents)))
 
         if 'info.txt' in map(lambda x: x.filename, contents):
-            # print('info.txt found..')
             info_file = z.open('info.txt', 'r')
-            # print info_file.read()
             for line in info_file:
                 if line.startswith(b"Serial Number:"):
                     newline = line.decode("utf-8")
                     newline = newline.split("Serial Number: ")[1]
-                    # print("Serial Number: "+newline)
                     return newline
         else:
             print("Could not find info.txt file")
