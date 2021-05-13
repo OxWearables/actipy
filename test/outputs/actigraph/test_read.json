@@ -1,0 +1,15 @@
+{
+    "filename": "data/sample_actigraph.gt3x",
+    "filesize(MB)": 12,
+    "args": {
+        "resample_uniform": false,
+        "calibrate_gravity": false,
+        "detect_nonwear": false,
+        "check_quality": false
+    },
+    "device": "Actigraph",
+    "deviceID": "NEO1DXXXXXXXX\r\n",
+    "readOK": 1,
+    "sampleRate": 30.0,
+    "readErrors": -1
+}

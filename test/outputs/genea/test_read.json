@@ -1,0 +1,15 @@
+{
+    "filename": "data/sample_genea.bin.gz",
+    "filesize(MB)": 198,
+    "args": {
+        "resample_uniform": false,
+        "calibrate_gravity": false,
+        "detect_nonwear": false,
+        "check_quality": false
+    },
+    "device": "GENEActiv",
+    "deviceID": "012159",
+    "readOK": 1,
+    "sampleRate": 85.7,
+    "readErrors": 0
+}
