@@ -120,3 +120,12 @@ doc/build/html/index.html
 doc/tmp.sv
 env/
 doc/source/savefig/
+
+# Sample wearable files
+*.cwa
+*.cwa.gz
+*.gt3x
+*.gt3x.gz
+*.bin
+*.bin.gz
+*.npy
