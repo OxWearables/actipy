@@ -121,13 +121,13 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
     del stationary_data
     del nonzero
 
-    intercept = np.array([0.0, 0.0, 0.0])
-    slope = np.array([1.0, 1.0, 1.0])
+    intercept = np.array([0.0, 0.0, 0.0], dtype=xyz.dtype)
+    slope = np.array([1.0, 1.0, 1.0], dtype=xyz.dtype)
     best_intercept = np.copy(intercept)
     best_slope = np.copy(slope)
 
     if hasT:
-        slopeT = np.array([0.0, 0.0, 0.0])
+        slopeT = np.array([0.0, 0.0, 0.0], dtype=dT.dtype)
         best_slopeT = np.copy(slopeT)
 
     curr = xyz
