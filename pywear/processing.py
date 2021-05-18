@@ -39,8 +39,8 @@ def resample(data, sample_rate):
         print(f"Found non-integer sample_rate {sample_rate},", end=" ")
         sample_rate = np.ceil(sample_rate)
         print(f"rounded-up to {sample_rate}.", end=" ")
-    info['resampleRate'] = sample_rate
 
+    info['resampleRate'] = sample_rate
     info['numTicksBeforeResample'] = len(data)
 
     # Create a new index with intended sample_rate
@@ -239,10 +239,12 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
 def get_stationary_indicator(data, window='10s', stdtol=15 / 1000):
     """ Return a boolean column indicating stationary points """
 
+    # What happens if there are NaNs?
+    # Ans: It evaluates to False so we're good
     stationary_indicator = ((data[['x', 'y', 'z']]
                             .rolling(window)
                             .std()
-                            < stdtol
-                             ).all(axis=1))
+                            < stdtol)
+                            .all(axis=1))
 
     return stationary_indicator
