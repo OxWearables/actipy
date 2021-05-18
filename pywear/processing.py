@@ -34,6 +34,13 @@ def resample(data, sample_rate):
 
     info = {}
 
+    # Round-up sample_rate if non-integer
+    if not sample_rate.is_integer():
+        print(f"Found non-integer sample_rate {sample_rate},", end=" ")
+        sample_rate = np.ceil(sample_rate)
+        print(f"rounded-up to {sample_rate}.", end=" ")
+    info['resampleRate'] = sample_rate
+
     info['numTicksBeforeResample'] = len(data)
 
     # Create a new index with intended sample_rate
