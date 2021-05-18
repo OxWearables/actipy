@@ -29,7 +29,7 @@ def read_device(input_file,
 
     # Basic info
     info['filename'] = input_file
-    info['filesize(MB)'] = int(round(os.path.getsize(input_file) / (1024 * 1024), 0))
+    info['filesize(MB)'] = round(os.path.getsize(input_file) / (1024 * 1024), 1)
     info['args'] = {
         'resample_uniform': resample_uniform,
         'calibrate_gravity': calibrate_gravity,
