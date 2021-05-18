@@ -26,7 +26,7 @@ def timer(msg):
 
 
 @timer(msg="Resampling... ")
-def resample(data, sample_rate):
+def resample(data, sample_rate, dropna=False):
     """ Resample data to sample_rate. This uses simple nearest neighbor
     resampling, so should only be used for sample_rate near the data's
     original sample rate. For sample_rate that is far from the original
@@ -53,7 +53,10 @@ def resample(data, sample_rate):
     data = data.reindex(new_index,
                         method='nearest',
                         tolerance=pd.Timedelta('1s'),
-                        limit=1).dropna()
+                        limit=1)
+
+    if dropna:
+        data = data.dropna()
 
     info['numTicksAfterResample'] = len(data)
 
