@@ -21,7 +21,6 @@ def read_device(input_file,
                 remove_noise=False,
                 calibrate_gravity=False,
                 detect_nonwear=False,
-                check_quality=False,
                 verbose=True):
     """ Read and process device file. Returns a pandas.DataFrame with the
     processed data, and a dict with processing and general info. """
@@ -31,12 +30,6 @@ def read_device(input_file,
     # Basic info
     info['filename'] = input_file
     info['filesize(MB)'] = round(os.path.getsize(input_file) / (1024 * 1024), 1)
-    info['args'] = {
-        'resample_uniform': resample_uniform,
-        'calibrate_gravity': calibrate_gravity,
-        'detect_nonwear': detect_nonwear,
-        'check_quality': check_quality,
-    }
 
     data, info_read = _read_device(input_file, verbose)
     data = npy2df(data)  # to pandas dataframe
@@ -47,7 +40,6 @@ def read_device(input_file,
                                   remove_noise=remove_noise,
                                   calibrate_gravity=calibrate_gravity,
                                   detect_nonwear=detect_nonwear,
-                                  check_quality=check_quality,
                                   verbose=verbose)
     info.update(info_process)
 
@@ -117,7 +109,6 @@ def _process(data, info_data,
              remove_noise=False,
              calibrate_gravity=False,
              detect_nonwear=False,
-             check_quality=False,
              verbose=False):
     """ Internal helper function to process data """
 
