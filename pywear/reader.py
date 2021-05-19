@@ -18,6 +18,7 @@ __all__ = ['read_device']
 
 def read_device(input_file,
                 resample_uniform=False,
+                remove_noise=False,
                 calibrate_gravity=False,
                 detect_nonwear=False,
                 check_quality=False,
@@ -43,6 +44,7 @@ def read_device(input_file,
 
     data, info_process = _process(data, info,
                                   resample_uniform=resample_uniform,
+                                  remove_noise=remove_noise,
                                   calibrate_gravity=calibrate_gravity,
                                   detect_nonwear=detect_nonwear,
                                   check_quality=check_quality,
@@ -112,6 +114,7 @@ def _read_device(input_file, verbose=True):
 
 def _process(data, info_data,
              resample_uniform=False,
+             remove_noise=False,
              calibrate_gravity=False,
              detect_nonwear=False,
              check_quality=False,
@@ -120,9 +123,18 @@ def _process(data, info_data,
 
     info = {}
 
+    # Noise removal routine requires the data be uniformly sampled
+    if remove_noise:
+        resample_uniform = True
+
     if resample_uniform:
         data, info_resample = processing.resample(data, info_data['sampleRate'])
         info.update(info_resample)
+
+    if remove_noise:
+        data, info_noise = processing.remove_noise(data, info_resample['resampleRate'],
+                                                   resample_uniform=False)  # no need as already resampled
+        info.update(info_noise)
 
     # Used for calibration and nonwear detection
     # If needed, compute it once as it's expensive

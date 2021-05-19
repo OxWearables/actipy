@@ -1,7 +1,9 @@
 import time
 import numpy as np
 import pandas as pd
+import bottleneck as bn
 import scipy.stats as stats
+import scipy.signal as signal
 import statsmodels.api as sm
 import functools
 
@@ -59,6 +61,41 @@ def resample(data, sample_rate, dropna=False):
         data = data.dropna()
 
     info['numTicksAfterResample'] = len(data)
+
+    return data, info
+
+
+@timer(msg="Removing noise...")
+def remove_noise(data, sample_rate, resample_uniform=True):
+
+    info = {}
+
+    if resample_uniform:
+        data, info_resample = resample_uniform(data, sample_rate, dropna=False)
+        sample_rate = info_resample['resamleRate']
+        info.update(info_resample)
+
+    # Median filter to remove outliers
+    window = int(round(sample_rate / 10))  # 0.1s
+    min_count = int(round(window / 2))
+    data = pd.DataFrame(bn.move_median(data.to_numpy(),
+                                       window=window,
+                                       min_count=min_count,
+                                       axis=0),
+                        columns=data.columns,
+                        index=data.index)
+
+    # Butter filter to remove high freq noise (most of human motion is under 20Hz)
+    lowpass_hz = 20
+    xyz = data[['x', 'y', 'z']].to_numpy()
+    # Temporarily replace nans with 0s for butterfilt
+    where_nan = bn.anynan(xyz, axis=1)
+    xyz[where_nan] = 0
+    xyz = butterfilt(xyz, lowpass_hz, fs=sample_rate, axis=0)
+    # Now restore nans
+    xyz[where_nan] = np.nan
+
+    data[['x', 'y', 'z']] = xyz
 
     return data, info
 
@@ -251,3 +288,26 @@ def get_stationary_indicator(data, window='10s', stdtol=15 / 1000):
                             .all(axis=1))
 
     return stationary_indicator
+
+
+def butterfilt(x, cutoffs, fs, order=8, axis=0):
+    nyq = 0.5 * fs
+    if isinstance(cutoffs, tuple):
+        hicut, lowcut = cutoffs
+        if hicut > 0:
+            if lowcut is not None:
+                btype = 'bandpass'
+                Wn = (hicut / nyq, lowcut / nyq)
+            else:
+                btype = 'highpass'
+                Wn = hicut / nyq
+        else:
+            btype = 'lowpass'
+            Wn = lowcut / nyq
+    else:
+        btype = 'lowpass'
+        Wn = cutoffs / nyq
+    sos = signal.butter(order, Wn, btype=btype, analog=False, output='sos')
+    y = signal.sosfiltfilt(sos, x, axis=axis)
+
+    return y
