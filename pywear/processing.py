@@ -8,7 +8,7 @@ import statsmodels.api as sm
 import functools
 
 
-__all__ = ['resample', 'detect_nonwear', 'calibrate_gravity', 'get_stationary_indicator']
+__all__ = ['resample', 'remove_noise', 'detect_nonwear', 'calibrate_gravity', 'get_stationary_indicator']
 
 
 def timer(msg):
@@ -86,16 +86,21 @@ def remove_noise(data, sample_rate, resample_uniform=True):
                         index=data.index)
 
     # Butter filter to remove high freq noise (most of human motion is under 20Hz)
+    # Skip this if the Nyquist freq is below 20Hz
     lowpass_hz = 20
-    xyz = data[['x', 'y', 'z']].to_numpy()
-    # Temporarily replace nans with 0s for butterfilt
-    where_nan = bn.anynan(xyz, axis=1)
-    xyz[where_nan] = 0
-    xyz = butterfilt(xyz, lowpass_hz, fs=sample_rate, axis=0)
-    # Now restore nans
-    xyz[where_nan] = np.nan
-
-    data[['x', 'y', 'z']] = xyz
+    if sample_rate / 2 > lowpass_hz:
+        xyz = data[['x', 'y', 'z']].to_numpy()
+        # Temporarily replace nans with 0s for butterfilt
+        where_nan = bn.anynan(xyz, axis=1)
+        xyz[where_nan] = 0
+        xyz = butterfilt(xyz, lowpass_hz, fs=sample_rate, axis=0)
+        # Now restore nans
+        xyz[where_nan] = np.nan
+        data[['x', 'y', 'z']] = xyz
+        info['lowpassFilterOK'] = 1
+    else:
+        print(f"Skipping lowpass filter: sample_rate {sample_rate} too low")
+        info['lowpassFilterOK'] = 0
 
     return data, info
 
