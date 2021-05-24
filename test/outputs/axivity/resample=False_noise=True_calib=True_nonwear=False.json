@@ -1,0 +1,20 @@
+{
+    "resampleRate": 100.0,
+    "numTicksBeforeResample": 51391800,
+    "numTicksAfterResample": 50524401,
+    "lowpassFilterOK": 1,
+    "calibErrorBefore(mg)": 84.33752506971359,
+    "calibErrorAfter(mg)": 3.8777682930231094,
+    "calibOK": 1,
+    "calibNumIters": 54,
+    "calibNumSamples": 28786,
+    "calibxIntercept": -0.050879303365945816,
+    "calibyIntercept": -0.017348185181617737,
+    "calibzIntercept": 0.018010329455137253,
+    "calibxSlope": 1.0070363283157349,
+    "calibySlope": 1.0003786087036133,
+    "calibzSlope": 1.0217716693878174,
+    "calibxSlopeT": 0.0004263172741048038,
+    "calibySlopeT": -0.0011229888768866658,
+    "calibzSlopeT": 0.005336223170161247
+}

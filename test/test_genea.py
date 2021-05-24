@@ -5,12 +5,12 @@ import json
 import pywear
 from test import utils
 
-DATA = 'data/sample.cwa.gz'
-OUTPUTS = 'test/outputs/axivity/'
+DATA = 'data/sample_genea.bin.gz'
+OUTPUTS = 'test/outputs/genea/'
 TESTS = utils.create_tests()
 
 
-class TestAxivity(unittest.TestCase):
+class TestGenea(unittest.TestCase):
 
     maxDiff = None
 
@@ -31,8 +31,8 @@ class TestAxivity(unittest.TestCase):
 
             with self.subTest(msg="Testing processing...", **testparam):
 
-                _, info = pywear.reader._process(TestAxivity.data,
-                                                 TestAxivity.info,
+                _, info = pywear.reader._process(TestGenea.data,
+                                                 TestGenea.info,
                                                  **testparam)
 
                 with open(os.path.join(OUTPUTS, testname + '.json')) as f:

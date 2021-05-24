@@ -1,0 +1,11 @@
+{
+    "resampleRate": 30.0,
+    "numTicksBeforeResample": 2699958,
+    "numTicksAfterResample": 2699971,
+    "lowpassFilterOK": 0,
+    "calibErrorBefore(mg)": 13.182391412556171,
+    "calibOK": 0,
+    "calibErrorAfter(mg)": 13.182391412556171,
+    "numNonWearEpisodes": 0,
+    "nonwearOverall(days)": 0.0
+}

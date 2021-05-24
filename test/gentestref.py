@@ -1,68 +1,43 @@
-""" This is for generating the reference test files.
-It runs the same things as the tests but without any checks.
+""" Generate the reference test output files.
+It runs the tests without any checks and saving the outputs.
 Run with `python -m test.gentestref` from project root.
 """
 import os
 import pywear
-from test.utils import save_dict2json
+from test import utils
 
 
-TESTS = [
-    {'input_file': 'data/sample.cwa.gz',
+TEST_DEVICES = [
+    {'file': 'data/sample.cwa.gz',
      'outdir': 'test/outputs/axivity'},
     {'input_file': 'data/sample_genea.bin.gz',
      'outdir': 'test/outputs/genea'},
-    {'input_file': 'data/sample_actigraph.gt3x',
+    {'file': 'data/sample_actigraph.gt3x',
      'outdir': 'test/outputs/actigraph'}
 ]
+
+TESTS = utils.create_tests()
 
 
 def main():
 
-    for test in TESTS:
-        print("Running:", test)
-        gentestref(test['input_file'], test['outdir'])
+    for device in TEST_DEVICES:
+        print("Running:", device)
+        gentestref(device['file'], device['outdir'], TESTS)
 
     return
 
 
-def gentestref(input_file, outdir):
+def gentestref(input_file, outdir, tests):
 
+    # Minimal file reading test with no other args
     data, info_read = pywear.read_device(input_file)
-    save_dict2json(info_read, os.path.join(outdir, 'test_read.json'))
+    utils.save_dict2json(info_read, os.path.join(outdir, 'read.json'))
 
-    _, info_resample = pywear.reader._process(data, info_read,
-                                              resample_uniform=True)
-    save_dict2json(info_resample, os.path.join(outdir, 'test_resample.json'))
-
-    _, info_calib = pywear.reader._process(data, info_read,
-                                           calibrate_gravity=True)
-    save_dict2json(info_calib, os.path.join(outdir, 'test_calib.json'))
-
-    _, info_nonwear = pywear.reader._process(data, info_read,
-                                             detect_nonwear=True)
-    save_dict2json(info_nonwear, os.path.join(outdir, 'test_nonwear.json'))
-
-    _, info_resample_calib = pywear.reader._process(data, info_read,
-                                                    resample_uniform=True,
-                                                    calibrate_gravity=True)
-    save_dict2json(info_resample_calib, os.path.join(outdir, 'test_resample_calib.json'))
-
-    _, info_resample_nonwear = pywear.reader._process(data, info_read,
-                                                      resample_uniform=True,
-                                                      detect_nonwear=True)
-    save_dict2json(info_resample_nonwear, os.path.join(outdir, 'test_resample_nonwear.json'))
-
-    _, info_calib_nonwear = pywear.reader._process(data, info_read,
-                                                   calibrate_gravity=True,
-                                                   detect_nonwear=True)
-    save_dict2json(info_calib_nonwear, os.path.join(outdir, 'test_calib_nonwear.json'))
-
-    _, info_resample_calib_nonwear = pywear.reader._process(data, info_read,
-                                                            resample_uniform=True,
-                                                            calibrate_gravity=True,
-                                                            detect_nonwear=True)
-    save_dict2json(info_resample_calib_nonwear, os.path.join(outdir, 'test_resample_calib_nonwear.json'))
+    for testname, testparam in tests.items():
+        print("Running:", testname)
+        _, info_test = pywear.reader._process(data, info_read, **testparam)
+        utils.save_dict2json(info_test, os.path.join(outdir, testname + '.json'))
 
 
 if __name__ == '__main__':

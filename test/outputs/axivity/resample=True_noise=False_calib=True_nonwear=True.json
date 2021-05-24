@@ -1,0 +1,21 @@
+{
+    "resampleRate": 100.0,
+    "numTicksBeforeResample": 51391800,
+    "numTicksAfterResample": 50524401,
+    "calibErrorBefore(mg)": 84.72403883934021,
+    "calibErrorAfter(mg)": 3.4563937224447727,
+    "calibOK": 1,
+    "calibNumIters": 61,
+    "calibNumSamples": 27552,
+    "calibxIntercept": -0.05105738714337349,
+    "calibyIntercept": -0.01999754272401333,
+    "calibzIntercept": 0.01604577526450157,
+    "calibxSlope": 1.006951928138733,
+    "calibySlope": 1.0000940561294556,
+    "calibzSlope": 1.0220681428909302,
+    "calibxSlopeT": 0.0004365475324448198,
+    "calibySlopeT": -0.0009852133225649595,
+    "calibzSlopeT": 0.0054618301801383495,
+    "numNonWearEpisodes": 0,
+    "nonwearOverall(days)": 0.0
+}

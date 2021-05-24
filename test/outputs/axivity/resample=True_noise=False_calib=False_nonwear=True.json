@@ -1,6 +1,7 @@
 {
+    "resampleRate": 100.0,
     "numTicksBeforeResample": 51391800,
-    "numTicksAfterResample": 50515693,
+    "numTicksAfterResample": 50524401,
     "numNonWearEpisodes": 0,
     "nonwearOverall(days)": 0.0
 }
