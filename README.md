@@ -8,6 +8,7 @@ Python tool to process Axivity (`.cwa`), GENEActiv (`.bin`) and Actigraph (`.gt3
 import pywear
 
 data, info = pywear.read_device("/path/to/data/sample.cwa",
+                                 resample_uniform=True,
                                  calibrate_gravity=True,
                                  detect_nonwear=True)
 
@@ -51,7 +52,10 @@ Poor man's installation steps in Linux:
 git clone https://github.com/activityMonitoring/pywear.git /path/to/pywear
 
 # Export the repo path to a PYWEARPATH system variable, required by Pywear
-echo export PYWEARPATH="$HOME/path/to/pywear" >> ~/.bashrc
+echo export PYWEARPATH="/path/to/pywear" >> ~/.bashrc
+
+# Compile java files
+javac /path/to/pywear/pywear/*.java
 
 # Make repo path visible to Python
 echo export PYTHONPATH="$PYWEARPATH:$PYTHONPATH" >> ~/.bashrc
