@@ -29,11 +29,11 @@ class TestAxivity(unittest.TestCase):
 
         for testname, testparam in TESTS.items():
 
-            with self.subTest(msg="Testing processing...", **testparam):
+            with self.subTest("Testing processing...", **testparam):
 
-                _, info = pywear.reader._process(TestAxivity.data,
-                                                 TestAxivity.info,
-                                                 **testparam)
+                _, info = pywear.reader.process(TestAxivity.data,
+                                                TestAxivity.info,
+                                                **testparam)
 
                 with open(os.path.join(OUTPUTS, testname + '.json')) as f:
                     _info = json.load(f)

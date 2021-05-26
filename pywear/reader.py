@@ -34,12 +34,12 @@ def read_device(input_file,
     data, info_read = _read_device(input_file, verbose)
     info.update(info_read)
 
-    data, info_process = _process(data, info,
-                                  resample_uniform=resample_uniform,
-                                  remove_noise=remove_noise,
-                                  calibrate_gravity=calibrate_gravity,
-                                  detect_nonwear=detect_nonwear,
-                                  verbose=verbose)
+    data, info_process = process(data, info,
+                                 resample_uniform=resample_uniform,
+                                 remove_noise=remove_noise,
+                                 calibrate_gravity=calibrate_gravity,
+                                 detect_nonwear=detect_nonwear,
+                                 verbose=verbose)
     info.update(info_process)
 
     return data, info
@@ -119,19 +119,19 @@ def java_device_read(input_file, output_file, verbose):
     return info
 
 
-def _process(data, info_data,
-             resample_uniform=False,
-             remove_noise=False,
-             calibrate_gravity=False,
-             detect_nonwear=False,
-             verbose=False):
-    """ Internal helper function to process data """
+def process(data, info_data,
+            resample_uniform=False,
+            remove_noise=False,
+            calibrate_gravity=False,
+            detect_nonwear=False,
+            verbose=False):
+    """ Function to run the several data processing steps """
 
     timer = Timer(verbose)
 
     info = {}
 
-    # Noise removal routine requires the data be uniformly sampled
+    # Noise removal requires the data be uniformly sampled
     if remove_noise:
         resample_uniform = True
 

@@ -36,7 +36,7 @@ def gentestref(input_file, outdir, tests):
 
     for testname, testparam in tests.items():
         print("Running:", testname)
-        _, info_test = pywear.reader._process(data, info_read, **testparam)
+        _, info_test = pywear.reader.process(data, info_read, **testparam)
         utils.save_dict2json(info_test, os.path.join(outdir, testname + '.json'))
 
 

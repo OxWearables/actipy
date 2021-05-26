@@ -29,11 +29,11 @@ class TestActigraph(unittest.TestCase):
 
         for testname, testparam in TESTS.items():
 
-            with self.subTest(msg="Testing processing...", **testparam):
+            with self.subTest("Testing processing...", **testparam):
 
-                _, info = pywear.reader._process(TestActigraph.data,
-                                                 TestActigraph.info,
-                                                 **testparam)
+                _, info = pywear.reader.process(TestActigraph.data,
+                                                TestActigraph.info,
+                                                **testparam)
 
                 with open(os.path.join(OUTPUTS, testname + '.json')) as f:
                     _info = json.load(f)
