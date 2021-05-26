@@ -1,33 +1,14 @@
-import time
 import numpy as np
 import pandas as pd
 import bottleneck as bn
 import scipy.stats as stats
 import scipy.signal as signal
 import statsmodels.api as sm
-import functools
 
 
 __all__ = ['resample', 'remove_noise', 'detect_nonwear', 'calibrate_gravity', 'get_stationary_indicator']
 
 
-def timer(msg):
-    """Print runtime of the decorated function"""
-    def inner(func):
-        @functools.wraps(func)
-        def wrapper_timer(*args, **kwargs):
-            before = time.perf_counter()
-            print(msg, end=" ", flush=True)
-            value = func(*args, **kwargs)
-            after = time.perf_counter()
-            runtime = after - before
-            print(f"Done! ({runtime:.2f}s)")
-            return value
-        return wrapper_timer
-    return inner
-
-
-@timer(msg="Resampling... ")
 def resample(data, sample_rate, dropna=False):
     """ Resample data to sample_rate. This uses simple nearest neighbor
     resampling, so should only be used for sample_rate near the data's
@@ -40,14 +21,13 @@ def resample(data, sample_rate, dropna=False):
     if not sample_rate.is_integer():
         print(f"Found non-integer sample_rate {sample_rate},", end=" ")
         sample_rate = np.ceil(sample_rate)
-        print(f"rounded-up to {sample_rate}.", end=" ")
+        print(f"rounded-up to {sample_rate}.")
 
     info['resampleRate'] = sample_rate
     info['numTicksBeforeResample'] = len(data)
 
-    # Create a new index with intended sample_rate
-    # Start and end times are rounded to seconds so that the number of ticks
-    # (periods) can be roundly derived from sample_rate
+    # Create a new index with intended sample_rate. Start and end times are
+    # rounded to seconds so that the number of ticks (periods) is round
     start = data.index[0].round('S')
     end = data.index[-1].round('S')
     periods = int((end - start).total_seconds() * sample_rate + 1)  # +1 for the last tick
@@ -65,7 +45,6 @@ def resample(data, sample_rate, dropna=False):
     return data, info
 
 
-@timer(msg="Removing noise...")
 def remove_noise(data, sample_rate, resample_uniform=True):
 
     info = {}
@@ -105,7 +84,6 @@ def remove_noise(data, sample_rate, resample_uniform=True):
     return data, info
 
 
-@timer(msg="Nonwear detection...")
 def detect_nonwear(data, patience='90m', stationary_indicator=None, drop=False):
     """ Detect nonwear episodes based on long durations of no movement """
 
@@ -134,7 +112,6 @@ def detect_nonwear(data, patience='90m', stationary_indicator=None, drop=False):
     return data, info
 
 
-@timer(msg="Gravity calibration...")
 def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
     """ Gravity calibration method of https://pubmed.ncbi.nlm.nih.gov/25103964/ """
 
@@ -280,7 +257,6 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
     return data, info
 
 
-@timer(msg="Getting stationary points...")
 def get_stationary_indicator(data, window='10s', stdtol=15 / 1000):
     """ Return a boolean column indicating stationary points """
 

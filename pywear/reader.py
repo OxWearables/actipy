@@ -32,7 +32,6 @@ def read_device(input_file,
     info['filesize(MB)'] = round(os.path.getsize(input_file) / (1024 * 1024), 1)
 
     data, info_read = _read_device(input_file, verbose)
-    data = npy2df(data)  # to pandas dataframe
     info.update(info_read)
 
     data, info_process = _process(data, info,
@@ -48,60 +47,76 @@ def read_device(input_file,
 
 def _read_device(input_file, verbose=True):
     """ Internal function that interfaces with the Java parser to read the
-    device file. Returns a numpy memmap with the parsed data, and a dict with
+    device file. Returns parsed data as a pandas dataframe, and a dict with
     general info.
     """
 
-    before = time.time()
+    try:
 
-    info = {}
+        timer = Timer(verbose)
 
-    # Setup
+        info = {}
+
+        # Temporary diretory to store internal runtime files
+        tmpdir = tempfile.mkdtemp()
+        # Temporary file to store parsed device data
+        tmpout = os.path.join(tmpdir, "tmpout.npy")
+
+        if input_file.lower().endswith((".gz", ".zip")):
+            timer.start("Decompressing...")
+            input_file = decompr(input_file, target_dir=tmpdir)
+            timer.stop()
+
+        # Device info
+        info_device = get_device_info(input_file)
+
+        # Parsing. Main action happens here.
+        timer.start("Reading file...")
+        info_read = java_device_read(input_file, tmpout, verbose)
+        timer.stop()
+
+        info.update({**info_device, **info_read})
+
+        # Load the parsed data to a pandas dataframe
+        timer.start("Converting to dataframe...")
+        data = npy2df(np.load(tmpout, mmap_mode='r'))
+        timer.stop()
+
+        return data, info
+
+    finally:
+
+        # Cleanup, delete temporary directory
+        try:
+            shutil.rmtree(tmpdir)
+        except OSError as e:
+            print("Error: %s - %s." % (e.filename, e.strerror))
+
+
+def java_device_read(input_file, output_file, verbose):
+    """ Core function that calls the Java method to read device data """
+
     setupJVM()
-    # Create a temporary diretory to store intermediate results
-    # This gets deleted at program exit
-    tmpdir = make_tmpdir()
-    tmpnpy = os.path.join(tmpdir, "tmp.npy")
-    if verbose:
-        print("Decompressing...", end="\r")
-    input_file_decompr = check_and_decompr(input_file, target_dir=tmpdir)
 
-    # Parsing
-    if verbose:
-        print("Reading file... ", end="\r")
-    if input_file_decompr.lower().endswith('.cwa'):
-        info['device'] = "Axivity"
-        info_parse = jpype.JClass('AxivityReader').read(input_file_decompr, tmpnpy, verbose)
+    if input_file.lower().endswith('.cwa'):
+        info = jpype.JClass('AxivityReader').read(input_file, output_file, verbose)
 
-    elif input_file_decompr.lower().endswith('.gt3x'):
-        info['device'] = "Actigraph"
-        info_parse = jpype.JClass('ActigraphReader').read(input_file_decompr, tmpnpy, verbose)
+    elif input_file.lower().endswith('.gt3x'):
+        info = jpype.JClass('ActigraphReader').read(input_file, output_file, verbose)
 
-    elif input_file_decompr.lower().endswith('.bin'):
-        info['device'] = "GENEActiv"
-        info_parse = jpype.JClass('GENEActivReader').read(input_file_decompr, tmpnpy, verbose)
+    elif input_file.lower().endswith('.bin'):
+        info = jpype.JClass('GENEActivReader').read(input_file, output_file, verbose)
 
     else:
-        raise ValueError(f"Unknown file format {input_file}")
-
-    # Device ID
-    info['deviceID'] = get_device_id(input_file_decompr)
+        raise ValueError(f"Unknown file extension: {input_file}")
 
     # Convert the Java HashMap object to Python dictionary
-    info_parse = {str(k): str(info_parse[k]) for k in info_parse}
-    info_parse['readOK'] = int(info_parse['readOK'])
-    info_parse['readErrors'] = int(info_parse['readErrors'])
-    info_parse['sampleRate'] = float(info_parse['sampleRate'])
+    info = {str(k): str(info[k]) for k in info}
+    info['readOK'] = int(info['readOK'])
+    info['readErrors'] = int(info['readErrors'])
+    info['sampleRate'] = float(info['sampleRate'])
 
-    info.update(info_parse)
-
-    # Load result
-    data = np.load(tmpnpy, mmap_mode='r')
-
-    if verbose:
-        print(f"Reading file... Done! ({time.time()-before:.2f}s)")
-
-    return data, info
+    return info
 
 
 def _process(data, info_data,
@@ -112,6 +127,8 @@ def _process(data, info_data,
              verbose=False):
     """ Internal helper function to process data """
 
+    timer = Timer(verbose)
+
     info = {}
 
     # Noise removal routine requires the data be uniformly sampled
@@ -119,27 +136,37 @@ def _process(data, info_data,
         resample_uniform = True
 
     if resample_uniform:
+        timer.start("Resampling...")
         data, info_resample = processing.resample(data, info_data['sampleRate'])
         info.update(info_resample)
+        timer.stop()
 
     if remove_noise:
+        timer.start("Removing noise...")
         data, info_noise = processing.remove_noise(data, info_resample['resampleRate'],
                                                    resample_uniform=False)  # no need as already resampled
         info.update(info_noise)
+        timer.stop()
 
     # Used for calibration and nonwear detection
     # If needed, compute it once as it's expensive
     stationary_indicator = None
     if calibrate_gravity or detect_nonwear:
+        timer.start("Getting stationary points...")
         stationary_indicator = processing.get_stationary_indicator(data)
+        timer.stop()
 
     if calibrate_gravity:
+        timer.start("Gravity calibration...")
         data, info_calib = processing.calibrate_gravity(data, stationary_indicator=stationary_indicator)
         info.update(info_calib)
+        timer.stop()
 
     if detect_nonwear:
+        timer.start("Nonwear detection...")
         data, info_nonwear = processing.detect_nonwear(data, stationary_indicator=stationary_indicator)
         info.update(info_nonwear)
+        timer.stop()
 
     return data, info
 
@@ -157,75 +184,62 @@ def setupJVM():
     return
 
 
-def check_and_decompr(filepath, target_dir):
-    """ Decompress file if necessary and check extension is correct """
+def decompr(input_file, target_dir):
+    """ Decompress file to target_dir """
 
     # Only .gz and .zip supported so far
-    if filepath.lower().endswith((".gz", ".zip")):
-        filename = os.path.basename(filepath)
-        uncompr_filename = os.path.splitext(filename)[0]
-        newpath = os.path.join(target_dir, uncompr_filename)
+    filename = os.path.basename(input_file)
+    uncompr_filename = os.path.splitext(filename)[0]
+    newfile = os.path.join(target_dir, uncompr_filename)
 
-        if filepath.lower().endswith(".gz"):
-            with gzip.open(filepath, 'rb') as fin:
-                with open(newpath, 'wb') as fout:
-                    shutil.copyfileobj(fin, fout)
+    if input_file.lower().endswith(".gz"):
+        with gzip.open(input_file, 'rb') as fin:
+            with open(newfile, 'wb') as fout:
+                shutil.copyfileobj(fin, fout)
 
-        elif filepath.lower().endswith(".zip"):
-            with zipfile.ZipFile(filepath, 'r') as f:
-                f.extractall(target_dir)
+    elif input_file.lower().endswith(".zip"):
+        with zipfile.ZipFile(input_file, 'r') as f:
+            f.extractall(target_dir)
 
-    else:
-        newpath = filepath
-
-    assert newpath.lower().endswith((".cwa", ".bin", ".gt3x")), f"Unknown file format {filepath}"
-
-    return newpath
-
-
-def make_tmpdir():
-    """ Create temporary directory. Remove at program exit """
-    tmpdir = tempfile.mkdtemp()
-
-    @atexit.register
-    def remove_tempdir():
-        try:
-            shutil.rmtree(tmpdir)
-        except OSError as e:
-            print("Error: %s - %s." % (e.filename, e.strerror))
-
-    return tmpdir
+    return newfile
 
 
 def npy2df(data):
     """ Convert numpy array to pandas dataframe.
     Also parse time and set it as index. """
 
-    before = time.time()
-    print("Converting to pandas dataframe...", end=" ", flush=True)
     data = pd.DataFrame(data)
-    # Set time
     data['time'] = data['time'].astype('datetime64[ms]')
     data = data.set_index('time')
-    print(f"Done! ({time.time()-before:.2f}s)")
 
     return data
 
 
-def get_device_id(inpfile):
+def get_device_info(input_file):
     """ Get serial number of device """
 
-    if inpfile.lower().endswith('.bin'):
-        return get_genea_id(inpfile)
-    elif inpfile.lower().endswith(('.cwa', '.cwa.gz')):
-        return get_axivity_id(inpfile)
-    elif inpfile.lower().endswith('.gt3x'):
-        return get_gt3x_id(inpfile)
-    elif inpfile.lower().endswith(('.csv', '.csv.gz')):
-        return "unknown (.csv)"
+    info = {}
+
+    if input_file.lower().endswith('.bin'):
+        info['device'] = 'GENEActiv'
+        info['deviceID'] = get_genea_id(input_file)
+
+    elif input_file.lower().endswith('.cwa'):
+        info['device'] = 'Axivity'
+        info['deviceID'] = get_axivity_id(input_file)
+
+    elif input_file.lower().endswith('.gt3x'):
+        info['device'] = 'Actigraph'
+        info['deviceID'] = get_gt3x_id(input_file)
+
+    elif input_file.lower().endswith('.csv'):
+        info['device'] = 'unknown (.csv)'
+        info['deviceID'] = 'unknown (.csv)'
+
     else:
-        print(f"Could not find device id for {inpfile}")
-        return "unknown"
+        raise ValueError(f"Unknown file extension: {input_file}")
+
+    return info
 
 
 def get_axivity_id(cwafile):
@@ -281,3 +295,25 @@ def get_gt3x_id(gt3xfile):
         else:
             print("Could not find info.txt file")
             return "unknown"
+
+
+class Timer:
+    def __init__(self, verbose=True):
+        self.verbose = verbose
+        self.start_time = None
+        self.msg = None
+
+    def start(self, msg="Starting timer..."):
+        assert self.start_time is None, "Timer is running. Use .stop() to stop it"
+        self.start_time = time.perf_counter()
+        self.msg = msg
+        if self.verbose:
+            print(msg, end="\r")
+
+    def stop(self):
+        assert self.start_time is not None, "Timer is not running. Use .start() to start it"
+        elapsed_time = time.perf_counter() - self.start_time
+        if self.verbose:
+            print(f"{self.msg} Done! ({elapsed_time:0.2f}s)")
+        self.start_time = None
+        self.msg = None
