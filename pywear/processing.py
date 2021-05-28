@@ -54,15 +54,18 @@ def remove_noise(data, sample_rate, resample_uniform=True):
         sample_rate = info_resample['resamleRate']
         info.update(info_resample)
 
-    # Median filter to remove outliers
-    window = int(round(sample_rate / 10))  # 0.1s
-    min_count = int(round(window / 2))
-    data = pd.DataFrame(bn.move_median(data.to_numpy(),
-                                       window=window,
-                                       min_count=min_count,
-                                       axis=0),
-                        columns=data.columns,
-                        index=data.index)
+    # Don't use: geometric median is probably a better method
+    # # Median filter to remove outliers
+    # window = int(round(sample_rate / 10))  # 0.1s
+    # min_count = int(round(window / 2))
+    # data = pd.DataFrame(bn.move_median(data.to_numpy(),
+    #                                    window=window,
+    #                                    min_count=min_count,
+    #                                    axis=0),
+    #                     columns=data.columns,
+    #                     index=data.index)
+
+    data = data.copy()
 
     # Butter filter to remove high freq noise (most of human motion is under 20Hz)
     # Skip this if the Nyquist freq is below 20Hz
