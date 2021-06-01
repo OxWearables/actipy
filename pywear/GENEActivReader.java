@@ -1,5 +1,4 @@
 
-import java.io.*;
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.time.format.DateTimeFormatter;
@@ -8,8 +7,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
-
-import javax.imageio.IIOException;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -44,7 +41,7 @@ public class GENEActivReader {
 
         int fileHeaderSize = 59;
         int linesToAxesCalibration = 47;
-        int pageHeaderSize = 9;
+        int blockHeaderSize = 9;
         int statusOK = -1;
         double sampleRate = -1;
         int errCounter = 0;
@@ -57,53 +54,44 @@ public class GENEActivReader {
             // Read header to determine mfrGain and mfrOffset values
             double[] mfrGain = new double[3];
             int[] mfrOffset = new int[3];
-            // memory size in pages
-            int memSizePages = parseBinFileHeader(rawAccReader, fileHeaderSize, linesToAxesCalibration, mfrGain, mfrOffset);
+            int numBlocksTotal = parseBinFileHeader(rawAccReader, fileHeaderSize, linesToAxesCalibration, mfrGain, mfrOffset);
 
-            int pageCount = 1;
+            int blockCount = 0;
             String header;
-            LocalDateTime blockTime = LocalDateTime.of(1999, 1, 1, 1, 1, 1);
+            long blockTime = 0;  // Unix millis
             double temperature = 0.0;
-            double blockSampleRate = 0.0;
-            String dataBlock;
+            double freq = 0.0;
+            String data;
             String timeFmtStr = "yyyy-MM-dd HH:mm:ss:SSS";
             DateTimeFormatter timeFmt = DateTimeFormatter.ofPattern(timeFmtStr);
+
             while ((readLine(rawAccReader)) != null) {
                 // header: "Recorded Data" (0), serialCode (1), seq num (2),
-                // pageTime (3), unassigned (4), temp (5), batteryVolt (6),
-                // deviceStatus (7), blockSampleRate (8),
-                // Then: dataBlock (9)
-                // line "page = readLine(..." above will read 1st header line
-                // (c=0)
-                for (int i = 1; i < pageHeaderSize; i++) {
+                // blockTime (3), unassigned (4), temp (5), batteryVolt (6),
+                // deviceStatus (7), freq (8), data (9)
+                for (int i = 1; i < blockHeaderSize; i++) {
                     try {
                         header = readLine(rawAccReader);
                         if (i == 3) {
-                            blockTime = LocalDateTime.parse(header.split("Time:")[1], timeFmt);
+                            blockTime = LocalDateTime
+                                        .parse(header.split("Time:")[1], timeFmt)
+                                        .toInstant(ZoneOffset.UTC)
+                                        .toEpochMilli();
                         } else if (i == 5) {
                             temperature = Double.parseDouble(header.split(":")[1]);
                         } else if (i == 8) {
-                            blockSampleRate = Double.parseDouble(header.split(":")[1]);
-                            // Register sample rate. Set to -2 if we got
-                            // more than one sample rate (dynamic sampling)
-                            if (sampleRate != -2) {
-                                if (sampleRate == -1) {
-                                    sampleRate = blockSampleRate;
-                                } else if (sampleRate != blockSampleRate) {
-                                    System.out.println("Warning: Found more than one sample rate "
-                                            + "(" + sampleRate + " and " + blockSampleRate + ")");
-                                    sampleRate = -2;
-                                }
-                            }
+                            freq = Double.parseDouble(header.split(":")[1]);
                         }
-                    } catch (Exception excep) {
-                        System.err.println(excep.toString());
-                        continue; // to keep reading sequence correct
+                    } catch (Exception e) {
+                        errCounter++;
+                        e.printStackTrace();
+                        continue;
                     }
                 }
+                sampleRate = freq;
 
-                // now process hex dataBlock
-                dataBlock = readLine(rawAccReader);
+                // now process hex data
+                data = readLine(rawAccReader);
 
                 // raw reading values
                 int hexPosition = 0;
@@ -113,42 +101,45 @@ public class GENEActivReader {
                 double x = 0.0;
                 double y = 0.0;
                 double z = 0.0;
+                double t = 0.0;
 
-                while (hexPosition < dataBlock.length()) {
-                    try {
-                        xRaw = getSignedIntFromHex(dataBlock, hexPosition, 3);
-                        yRaw = getSignedIntFromHex(dataBlock, hexPosition + 3, 3);
-                        zRaw = getSignedIntFromHex(dataBlock, hexPosition + 6, 3);
-                    } catch (Exception excep) {
-                        errCounter++;
-                        System.err.println("block err @ " + blockTime.toString() + ": " + excep.toString());
-                        break; // rest of block/page could be corrupted
-                    }
-                    // todo *** read in light[36:46] (10 bits to signed int) and
-                    // button[47] (bool) values...
-
-                    // update values to calibrated measure (taken from GENEActiv
-                    // manual)
-                    x = (xRaw * 100.0d - mfrOffset[0]) / mfrGain[0];
-                    y = (yRaw * 100.0d - mfrOffset[1]) / mfrGain[1];
-                    z = (zRaw * 100.0d - mfrOffset[2]) / mfrGain[2];
+                int i = 0;
+                while (hexPosition < data.length()) {
 
                     try {
-                        writer.write(toItems(getEpochMillis(blockTime), x, y, z, temperature));
+
+                        xRaw = getSignedIntFromHex(data, hexPosition, 3);
+                        yRaw = getSignedIntFromHex(data, hexPosition + 3, 3);
+                        zRaw = getSignedIntFromHex(data, hexPosition + 6, 3);
+                        // todo *** read in light[36:46] (10 bits to signed int) and
+                        // button[47] (bool) values...
+
+                        // Update values to calibrated measure (taken from GENEActiv manual)
+                        x = (xRaw * 100.0d - mfrOffset[0]) / mfrGain[0];
+                        y = (yRaw * 100.0d - mfrOffset[1]) / mfrGain[1];
+                        z = (zRaw * 100.0d - mfrOffset[2]) / mfrGain[2];
+
+                        t = (double)blockTime + (double)i * (1.0 / freq) * 1000;  // Unix millis
+
+                        writer.write(toItems((long) t, x, y, z, temperature));
+
+                        hexPosition += 12;
+                        i++;
+
                     } catch (Exception e) {
-                        System.err.println("Line write error: " + e.toString());
+                        errCounter++;
+                        e.printStackTrace();
+                        break;  // rest of this block could be corrupted
                     }
 
-                    hexPosition += 12;
-                    blockTime = blockTime.plusNanos(secs2Nanos(1.0 / blockSampleRate));
                 }
 
                 // Progress bar
-                pageCount++;
+                blockCount++;
                 if (verbose) {
-                    if ((pageCount % 10000 == 0) || (pageCount == memSizePages)) {
-                        System.out.print("Reading file... " + (pageCount * 100 / memSizePages) + "%\r");
-                        // if (pageCount == memSizePages) {System.out.print("\n");}
+                    if ((blockCount % 10000 == 0) || (blockCount == numBlocksTotal)) {
+                        System.out.print("Reading file... " + (blockCount * 100 / numBlocksTotal) + "%\r");
+                        // if (blockCount == numBlocksTotal) {System.out.print("\n");}
                     }
                 }
 
@@ -157,16 +148,15 @@ public class GENEActivReader {
 
             statusOK = 1;
 
-        } catch (Exception excep) {
-            excep.printStackTrace(System.err);
-            System.err.println("Error reading/writing file " + accFile + ": " + excep.toString());
+        } catch (Exception e) {
+            e.printStackTrace();
             statusOK = 0;
 
         } finally {
             try{
                 writer.close();
             } catch (Exception e) {
-                e.printStackTrace(System.err);
+                e.printStackTrace();
             }
         }
 
@@ -206,13 +196,13 @@ public class GENEActivReader {
         int lux = Integer.parseInt(readLine(reader).split(":")[1]); // lux
         readLine(reader); // 9 blank
         readLine(reader); // 10 memory status header
-        int memorySizePages = Integer.parseInt(readLine(reader).split(":")[1]); // 11
+        int numBlocksTotal = Integer.parseInt(readLine(reader).split(":")[1]); // 11
 
         // ignore remaining header lines in bin file
         for (int i = 0; i < fileHeaderSize - linesToAxesCalibration - 11; i++) {
             readLine(reader);
         }
-        return memorySizePages;
+        return numBlocksTotal;
 
     }
 
@@ -221,16 +211,16 @@ public class GENEActivReader {
         String line = "";
         try {
             line = reader.readLine();
-        } catch (Exception excep) {
-            System.err.println(excep.toString());
+        } catch (Exception e) {
+            e.printStackTrace();
         }
         return line;
     }
 
 
-    private static int getSignedIntFromHex(String dataBlock, int startPos, int length) {
+    private static int getSignedIntFromHex(String data, int startPos, int length) {
         // input hex base is 16
-        int rawVal = Integer.parseInt(dataBlock.substring(startPos, startPos + length), 16);
+        int rawVal = Integer.parseInt(data.substring(startPos, startPos + length), 16);
         int unsignedLimit = 4096; // 2^[length*4] #i.e. 3 hexBytes (12 bits)
                                     // limit = 4096
         int signedLimit = 2048; // 2^[length*(4-1)] #i.e. 3 hexBytes - 1 bit (11
