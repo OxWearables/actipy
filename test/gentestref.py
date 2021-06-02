@@ -10,7 +10,7 @@ from test import utils
 TEST_DEVICES = [
     {'file': 'data/sample.cwa.gz',
      'outdir': 'test/outputs/axivity'},
-    {'input_file': 'data/sample_genea.bin.gz',
+    {'file': 'data/sample_genea.bin.gz',
      'outdir': 'test/outputs/genea'},
     {'file': 'data/sample_actigraph.gt3x',
      'outdir': 'test/outputs/actigraph'}
