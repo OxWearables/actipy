@@ -122,6 +122,7 @@ env/
 doc/source/savefig/
 
 # Sample wearable files
+data/
 *.cwa
 *.cwa.gz
 *.gt3x
