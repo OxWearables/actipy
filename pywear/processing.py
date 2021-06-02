@@ -26,6 +26,13 @@ def resample(data, sample_rate, dropna=False):
     info['resampleRate'] = sample_rate
     info['numTicksBeforeResample'] = len(data)
 
+    # Fix nonmonotonic timestamps (rarely occurs)
+    data = data[data.index.to_series()
+                .cummax()
+                .diff()
+                .fillna(pd.Timedelta(1))
+                > pd.Timedelta(0)]
+
     # Create a new index with intended sample_rate. Start and end times are
     # rounded to seconds so that the number of ticks (periods) is round
     start = data.index[0].round('S')
