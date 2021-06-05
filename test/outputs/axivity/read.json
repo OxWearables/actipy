@@ -1,9 +1,9 @@
 {
-    "filename": "data/sample.cwa.gz",
-    "filesize(MB)": 69.4,
-    "device": "Axivity",
-    "deviceID": 1020,
-    "readOK": 1,
-    "sampleRate": 100.0,
-    "readErrors": 0
+    "Filename": "data/sample.cwa.gz",
+    "Filesize(MB)": 69.4,
+    "Device": "Axivity",
+    "DeviceID": 1020,
+    "ReadErrors": 0,
+    "SampleRate": 100.0,
+    "ReadOK": 1
 }

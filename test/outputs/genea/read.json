@@ -1,9 +1,9 @@
 {
-    "filename": "data/sample_genea.bin.gz",
-    "filesize(MB)": 197.8,
-    "device": "GENEActiv",
-    "deviceID": "012159",
-    "readOK": 1,
-    "sampleRate": 85.7,
-    "readErrors": 0
+    "Filename": "data/sample_genea.bin.gz",
+    "Filesize(MB)": 197.8,
+    "Device": "GENEActiv",
+    "DeviceID": "012159",
+    "ReadErrors": 0,
+    "SampleRate": 85.7,
+    "ReadOK": 1
 }

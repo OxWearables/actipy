@@ -1,5 +1,5 @@
 {
-    "resampleRate": 30.0,
-    "numTicksBeforeResample": 2699958,
-    "numTicksAfterResample": 2699971
+    "ResampleRate": 30.0,
+    "NumTicksBeforeResample": 2699958,
+    "NumTicksAfterResample": 2699971
 }

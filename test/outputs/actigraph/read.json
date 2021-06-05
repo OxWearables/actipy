@@ -1,9 +1,9 @@
 {
-    "filename": "data/sample_actigraph.gt3x",
-    "filesize(MB)": 12.1,
-    "device": "Actigraph",
-    "deviceID": "NEO1DXXXXXXXX\r\n",
-    "readOK": 1,
-    "sampleRate": 30.0,
-    "readErrors": -1
+    "Filename": "data/sample_actigraph.gt3x",
+    "Filesize(MB)": 12.1,
+    "Device": "Actigraph",
+    "DeviceID": "NEO1DXXXXXXXX\r\n",
+    "ReadErrors": -1,
+    "SampleRate": 30.0,
+    "ReadOK": 1
 }

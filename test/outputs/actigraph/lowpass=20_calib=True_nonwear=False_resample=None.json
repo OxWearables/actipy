@@ -1,6 +1,6 @@
 {
-    "lowpassFilterOK": 0,
-    "calibErrorBefore(mg)": 13.110397383570671,
-    "calibOK": 0,
-    "calibErrorAfter(mg)": 13.110397383570671
+    "LowpassOK": 0,
+    "CalibErrorBefore(mg)": 13.110397383570671,
+    "CalibOK": 0,
+    "CalibErrorAfter(mg)": 13.110397383570671
 }

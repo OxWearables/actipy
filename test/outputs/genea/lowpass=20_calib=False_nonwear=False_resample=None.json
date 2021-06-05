@@ -1,4 +1,4 @@
 {
-    "lowpassFilterOK": 1,
-    "lowpassCutoff(Hz)": 20
+    "LowpassOK": 1,
+    "LowpassCutoff(Hz)": 20
 }
