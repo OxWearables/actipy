@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 import bottleneck as bn
-import scipy.stats as stats
 import scipy.signal as signal
 import statsmodels.api as sm
 
@@ -181,7 +180,7 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
 
         # Weighting. Outliers are zeroed out
         # This is different from the paper
-        maxerr = err + 1.5 * stats.iqr(errors)
+        maxerr = np.quantile(errors, .995)
         weights = np.maximum(1 - errors / maxerr, 0)
 
         # Optimize params for each axis
