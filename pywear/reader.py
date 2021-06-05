@@ -28,13 +28,13 @@ def read_device(input_file,
     info = {}
 
     # Basic info
-    info['filename'] = input_file
-    info['filesize(MB)'] = round(os.path.getsize(input_file) / (1024 * 1024), 1)
+    info['Filename'] = input_file
+    info['Filesize(MB)'] = round(os.path.getsize(input_file) / (1024 * 1024), 1)
 
     data, info_read = _read_device(input_file, verbose)
     info.update(info_read)
 
-    data, info_process = process(data, info['sampleRate'],
+    data, info_process = process(data, info['SampleRate'],
                                  lowpass_hz=lowpass_hz,
                                  calibrate_gravity=calibrate_gravity,
                                  detect_nonwear=detect_nonwear,
@@ -43,80 +43,6 @@ def read_device(input_file,
     info.update(info_process)
 
     return data, info
-
-
-def _read_device(input_file, verbose=True):
-    """ Internal function that interfaces with the Java parser to read the
-    device file. Returns parsed data as a pandas dataframe, and a dict with
-    general info.
-    """
-
-    try:
-
-        timer = Timer(verbose)
-
-        info = {}
-
-        # Temporary diretory to store internal runtime files
-        tmpdir = tempfile.mkdtemp()
-        # Temporary file to store parsed device data
-        tmpout = os.path.join(tmpdir, "tmpout.npy")
-
-        if input_file.lower().endswith((".gz", ".zip")):
-            timer.start("Decompressing...")
-            input_file = decompr(input_file, target_dir=tmpdir)
-            timer.stop()
-
-        # Device info
-        info_device = get_device_info(input_file)
-
-        # Parsing. Main action happens here.
-        timer.start("Reading file...")
-        info_read = java_device_read(input_file, tmpout, verbose)
-        timer.stop()
-
-        info.update({**info_device, **info_read})
-
-        # Load the parsed data to a pandas dataframe
-        timer.start("Converting to dataframe...")
-        data = npy2df(np.load(tmpout, mmap_mode='r'))
-        timer.stop()
-
-        return data, info
-
-    finally:
-
-        # Cleanup, delete temporary directory
-        try:
-            shutil.rmtree(tmpdir)
-        except OSError as e:
-            print("Error: %s - %s." % (e.filename, e.strerror))
-
-
-def java_device_read(input_file, output_file, verbose):
-    """ Core function that calls the Java method to read device data """
-
-    setupJVM()
-
-    if input_file.lower().endswith('.cwa'):
-        info = jpype.JClass('AxivityReader').read(input_file, output_file, verbose)
-
-    elif input_file.lower().endswith('.gt3x'):
-        info = jpype.JClass('ActigraphReader').read(input_file, output_file, verbose)
-
-    elif input_file.lower().endswith('.bin'):
-        info = jpype.JClass('GENEActivReader').read(input_file, output_file, verbose)
-
-    else:
-        raise ValueError(f"Unknown file extension: {input_file}")
-
-    # Convert the Java HashMap object to Python dictionary
-    info = {str(k): str(info[k]) for k in info}
-    info['readOK'] = int(info['readOK'])
-    info['readErrors'] = int(info['readErrors'])
-    info['sampleRate'] = float(info['sampleRate'])
-
-    return info
 
 
 def process(data, sample_rate,
@@ -169,6 +95,80 @@ def process(data, sample_rate,
     return data, info
 
 
+def _read_device(input_file, verbose=True):
+    """ Internal function that interfaces with the Java parser to read the
+    device file. Returns parsed data as a pandas dataframe, and a dict with
+    general info.
+    """
+
+    try:
+
+        timer = Timer(verbose)
+
+        info = {}
+
+        # Temporary diretory to store internal runtime files
+        tmpdir = tempfile.mkdtemp()
+        # Temporary file to store parsed device data
+        tmpout = os.path.join(tmpdir, "tmpout.npy")
+
+        if input_file.lower().endswith((".gz", ".zip")):
+            timer.start("Decompressing...")
+            input_file = decompr(input_file, target_dir=tmpdir)
+            timer.stop()
+
+        # Device info
+        info_device = get_device_info(input_file)
+
+        # Parsing. Main action happens here.
+        timer.start("Reading file...")
+        info_read = java_read_device(input_file, tmpout, verbose)
+        timer.stop()
+
+        info.update({**info_device, **info_read})
+
+        # Load the parsed data to a pandas dataframe
+        timer.start("Converting to dataframe...")
+        data = npy2df(np.load(tmpout, mmap_mode='r'))
+        timer.stop()
+
+        return data, info
+
+    finally:
+
+        # Cleanup, delete temporary directory
+        try:
+            shutil.rmtree(tmpdir)
+        except OSError as e:
+            print("Error: %s - %s." % (e.filename, e.strerror))
+
+
+def java_read_device(input_file, output_file, verbose):
+    """ Core function that calls the Java method to read device data """
+
+    setupJVM()
+
+    if input_file.lower().endswith('.cwa'):
+        info = jpype.JClass('AxivityReader').read(input_file, output_file, verbose)
+
+    elif input_file.lower().endswith('.gt3x'):
+        info = jpype.JClass('ActigraphReader').read(input_file, output_file, verbose)
+
+    elif input_file.lower().endswith('.bin'):
+        info = jpype.JClass('GENEActivReader').read(input_file, output_file, verbose)
+
+    else:
+        raise ValueError(f"Unknown file extension: {input_file}")
+
+    # Convert the Java HashMap object to Python dictionary
+    info = {str(k): str(info[k]) for k in info}
+    info['ReadOK'] = int(info['ReadOK'])
+    info['ReadErrors'] = int(info['ReadErrors'])
+    info['SampleRate'] = float(info['SampleRate'])
+
+    return info
+
+
 def setupJVM():
     """ Start JVM. Shutdown at program exit """
     if not jpype.isJVMStarted():
@@ -219,20 +219,20 @@ def get_device_info(input_file):
     info = {}
 
     if input_file.lower().endswith('.bin'):
-        info['device'] = 'GENEActiv'
-        info['deviceID'] = get_genea_id(input_file)
+        info['Device'] = 'GENEActiv'
+        info['DeviceID'] = get_genea_id(input_file)
 
     elif input_file.lower().endswith('.cwa'):
-        info['device'] = 'Axivity'
-        info['deviceID'] = get_axivity_id(input_file)
+        info['Device'] = 'Axivity'
+        info['DeviceID'] = get_axivity_id(input_file)
 
     elif input_file.lower().endswith('.gt3x'):
-        info['device'] = 'Actigraph'
-        info['deviceID'] = get_gt3x_id(input_file)
+        info['Device'] = 'Actigraph'
+        info['DeviceID'] = get_gt3x_id(input_file)
 
     elif input_file.lower().endswith('.csv'):
-        info['device'] = 'unknown (.csv)'
-        info['deviceID'] = 'unknown (.csv)'
+        info['Device'] = 'unknown (.csv)'
+        info['DeviceID'] = 'unknown (.csv)'
 
     else:
         raise ValueError(f"Unknown file extension: {input_file}")

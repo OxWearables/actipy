@@ -35,7 +35,7 @@ class TestAxivity(unittest.TestCase):
             with self.subTest("Testing processing...", **testparam):
 
                 _, info = pywear.process(TestAxivity.data,
-                                         TestAxivity.info['sampleRate'],
+                                         TestAxivity.info['SampleRate'],
                                          **testparam)
 
                 with open(os.path.join(OUTPUTS, testname + '.json')) as f:

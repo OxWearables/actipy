@@ -160,9 +160,9 @@ public class GENEActivReader {
             }
         }
 
-        info.put("readOK", String.valueOf(statusOK));
-        info.put("readErrors", String.valueOf(errCounter));
-        info.put("sampleRate", String.valueOf(sampleRate));
+        info.put("ReadOK", String.valueOf(statusOK));
+        info.put("ReadErrors", String.valueOf(errCounter));
+        info.put("SampleRate", String.valueOf(sampleRate));
 
         return info;
 

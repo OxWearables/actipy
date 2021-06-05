@@ -22,8 +22,8 @@ def resample(data, sample_rate, dropna=False):
         sample_rate = np.ceil(sample_rate)
         print(f"rounded-up to {sample_rate}.")
 
-    info['resampleRate'] = sample_rate
-    info['numTicksBeforeResample'] = len(data)
+    info['ResampleRate'] = sample_rate
+    info['NumTicksBeforeResample'] = len(data)
 
     # Fix if time non-increasing (rarely occurs)
     if (data.index.to_series().diff() <= pd.Timedelta(0)).any():
@@ -47,7 +47,7 @@ def resample(data, sample_rate, dropna=False):
     if dropna:
         data = data.dropna()
 
-    info['numTicksAfterResample'] = len(data)
+    info['NumTicksAfterResample'] = len(data)
 
     return data, info
 
@@ -71,11 +71,11 @@ def lowpass(data, data_sample_rate, cutoff_rate=20):
         # Now restore nans
         xyz[where_nan] = np.nan
         data[['x', 'y', 'z']] = xyz
-        info['lowpassFilterOK'] = 1
-        info['lowpassCutoff(Hz)'] = cutoff_rate
+        info['LowpassOK'] = 1
+        info['LowpassCutoff(Hz)'] = cutoff_rate
     else:
         print(f"Skipping lowpass filter: data sample rate {data_sample_rate} too low for cutoff rate {cutoff_rate}")
-        info['lowpassFilterOK'] = 0
+        info['LowpassOK'] = 0
 
     data = data.reindex(orig_index,
                         method='nearest',
@@ -100,15 +100,15 @@ def detect_nonwear(data, patience='90m', stationary_indicator=None, drop=False):
                            .apply(lambda g: g.index[-1] - g.index[0]))
     nonwear_len = stationary_len[stationary_len > pd.Timedelta(patience)]
 
-    info['numNonWearEpisodes'] = len(nonwear_len)
-    info['nonwearOverall(days)'] = nonwear_len.sum().total_seconds() / (60 * 60 * 24)
+    info['NumNonwearEpisodes'] = len(nonwear_len)
+    info['NonwearTime(days)'] = nonwear_len.sum().total_seconds() / (60 * 60 * 24)
 
     # Flag nonwear
-    nonwhere_indicator = group.isin(nonwear_len.index)
+    nonwear_indicator = group.isin(nonwear_len.index)
     if drop:
-        data = data[~nonwhere_indicator]
+        data = data[~nonwear_indicator]
     else:
-        data = data.mask(nonwhere_indicator)
+        data = data.mask(nonwear_indicator)
 
     return data, info
 
@@ -166,14 +166,14 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
     IMPROV_TOL = 0.0001
     ERR_TOL = 0.01
 
-    info['calibErrorBefore(mg)'] = init_err * 1000
+    info['CalibErrorBefore(mg)'] = init_err * 1000
 
     # Check that we have sufficiently uniformly distributed points:
     # need at least one point outside each face of the cube
     if (np.max(xyz, axis=0) < calib_cube).any() \
             or (np.min(xyz, axis=0) > -calib_cube).any():
-        info['calibOK'] = 0
-        info['calibErrorAfter(mg)'] = init_err * 1000
+        info['CalibOK'] = 0
+        info['CalibErrorAfter(mg)'] = init_err * 1000
 
         return data, info
 
@@ -223,10 +223,10 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
         if err_improv < IMPROV_TOL:
             break
 
-    info['calibErrorAfter(mg)'] = best_err * 1000
+    info['CalibErrorAfter(mg)'] = best_err * 1000
 
     if best_err > ERR_TOL:
-        info['calibOK'] = 0
+        info['CalibOK'] = 0
 
         return data, info
 
@@ -240,20 +240,20 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
                                      # + best_slopeT * (data['T'].to_numpy()[:,None]-Tref))
                                      + best_slopeT * (data['T'].to_numpy()[:, None]))
 
-        info['calibOK'] = 1
-        info['calibNumIters'] = it + 1
-        info['calibNumSamples'] = len(xyz)
-        info['calibxIntercept'] = best_intercept[0]
-        info['calibyIntercept'] = best_intercept[1]
-        info['calibzIntercept'] = best_intercept[2]
-        info['calibxSlope'] = best_slope[0]
-        info['calibySlope'] = best_slope[1]
-        info['calibzSlope'] = best_slope[2]
+        info['CalibOK'] = 1
+        info['CalibNumIters'] = it + 1
+        info['CalibNumSamples'] = len(xyz)
+        info['CalibxIntercept'] = best_intercept[0]
+        info['CalibyIntercept'] = best_intercept[1]
+        info['CalibzIntercept'] = best_intercept[2]
+        info['CalibxSlope'] = best_slope[0]
+        info['CalibySlope'] = best_slope[1]
+        info['CalibzSlope'] = best_slope[2]
         if hasT:
-            info['calibxSlopeT'] = best_slopeT[0]
-            info['calibySlopeT'] = best_slopeT[1]
-            info['calibzSlopeT'] = best_slopeT[2]
-            # info['calibTref'] = Tref
+            info['CalibxSlopeT'] = best_slopeT[0]
+            info['CalibySlopeT'] = best_slopeT[1]
+            info['CalibzSlopeT'] = best_slopeT[2]
+            # info['CalibTref'] = Tref
 
     return data, info
 

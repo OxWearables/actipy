@@ -35,7 +35,7 @@ class TestActigraph(unittest.TestCase):
             with self.subTest("Testing processing...", **testparam):
 
                 _, info = pywear.process(TestActigraph.data,
-                                         TestActigraph.info['sampleRate'],
+                                         TestActigraph.info['SampleRate'],
                                          **testparam)
 
                 with open(os.path.join(OUTPUTS, testname + '.json')) as f:

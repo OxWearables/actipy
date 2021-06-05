@@ -24,22 +24,22 @@ data, info = pywear.read_device("/path/to/data/sample.cwa",
 # ...                           ...       ...       ...        ...
 
 # info [dict]
-# filename              : data/sample.cwa
-# filesize(MB)          : 209
-# deviceID              : 1020
-# device                : Axivity
-# readOK                : 1
-# readErrors            : 0
-# sampleRate            : 100.0
-# resampled             : 1
-# numTicksBeforeResample: 51391800
-# numTicksAfterResample : 50515693
-# detectNonwear         : 1
-# numNonWearEpisodes    : 0
-# nonwearOverall(days)  : 0.0
-# calibrated            : 1
-# calibErrorBefore(mg)  : 84.72403883934021
-# calibErrorAfter(mg)   : 3.4564044541239087
+# Filename              : data/sample.cwa
+# Filesize(MB)          : 209
+# DeviceID              : 1020
+# Device                : Axivity
+# ReadOK                : 1
+# ReadErrors            : 0
+# SampleRate            : 100.0
+# Resampled             : 1
+# NumTicksBeforeResample: 51391800
+# NumTicksAfterResample : 50515693
+# DetectNonwear         : 1
+# NumNonWearEpisodes    : 0
+# NonwearTime(days)     : 0.0
+# Calibrated            : 1
+# CalibErrorBefore(mg)  : 84.72403883934021
+# CalibErrorAfter(mg)   : 3.4564044541239087
 # ...
 
 ```

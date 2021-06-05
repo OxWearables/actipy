@@ -35,7 +35,7 @@ class TestGenea(unittest.TestCase):
             with self.subTest("Testing processing...", **testparam):
 
                 _, info = pywear.process(TestGenea.data,
-                                         TestGenea.info['sampleRate'],
+                                         TestGenea.info['SampleRate'],
                                          **testparam)
 
                 with open(os.path.join(OUTPUTS, testname + '.json')) as f:
