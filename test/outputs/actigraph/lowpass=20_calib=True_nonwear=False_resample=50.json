@@ -1,0 +1,9 @@
+{
+    "lowpassFilterOK": 0,
+    "calibErrorBefore(mg)": 13.110397383570671,
+    "calibOK": 0,
+    "calibErrorAfter(mg)": 13.110397383570671,
+    "resampleRate": 50,
+    "numTicksBeforeResample": 2699958,
+    "numTicksAfterResample": 4499951
+}

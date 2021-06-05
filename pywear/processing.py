@@ -6,19 +6,18 @@ import scipy.signal as signal
 import statsmodels.api as sm
 
 
-__all__ = ['resample', 'remove_noise', 'detect_nonwear', 'calibrate_gravity', 'get_stationary_indicator']
+__all__ = ['lowpass', 'detect_nonwear', 'calibrate_gravity', 'get_stationary_indicator', 'resample']
 
 
 def resample(data, sample_rate, dropna=False):
     """ Resample data to sample_rate. This uses simple nearest neighbor
-    resampling, so should only be used for sample_rate near the data's
-    original sample rate. For sample_rate that is far from the original
-    rate, resampling with antialiasing filters should be done instead. """
+    resampling, so be sure to use antialiasing filters if using a rate
+    much lower than data's original rate. """
 
     info = {}
 
     # Round-up sample_rate if non-integer
-    if not sample_rate.is_integer():
+    if isinstance(sample_rate, float) and not sample_rate.is_integer():
         print(f"Found non-integer sample_rate {sample_rate},", end=" ")
         sample_rate = np.ceil(sample_rate)
         print(f"rounded-up to {sample_rate}.")
@@ -26,12 +25,13 @@ def resample(data, sample_rate, dropna=False):
     info['resampleRate'] = sample_rate
     info['numTicksBeforeResample'] = len(data)
 
-    # Fix nonmonotonic timestamps (rarely occurs)
-    data = data[data.index.to_series()
-                .cummax()
-                .diff()
-                .fillna(pd.Timedelta(1))
-                > pd.Timedelta(0)]
+    # Fix if time non-increasing (rarely occurs)
+    if (data.index.to_series().diff() <= pd.Timedelta(0)).any():
+        data = data[data.index.to_series()
+                    .cummax()
+                    .diff()
+                    .fillna(pd.Timedelta(1))
+                    > pd.Timedelta(0)]
 
     # Create a new index with intended sample_rate. Start and end times are
     # rounded to seconds so that the number of ticks (periods) is round
@@ -52,44 +52,35 @@ def resample(data, sample_rate, dropna=False):
     return data, info
 
 
-def remove_noise(data, sample_rate, resample_uniform=True):
+def lowpass(data, data_sample_rate, cutoff_rate=20):
 
     info = {}
 
-    if resample_uniform:
-        data, info_resample = resample_uniform(data, sample_rate, dropna=False)
-        sample_rate = info_resample['resamleRate']
-        info.update(info_resample)
+    orig_index = data.index
+    data, _ = resample(data, data_sample_rate, dropna=False)
 
-    # Don't use: geometric median is probably a better method
-    # # Median filter to remove outliers
-    # window = int(round(sample_rate / 10))  # 0.1s
-    # min_count = int(round(window / 2))
-    # data = pd.DataFrame(bn.move_median(data.to_numpy(),
-    #                                    window=window,
-    #                                    min_count=min_count,
-    #                                    axis=0),
-    #                     columns=data.columns,
-    #                     index=data.index)
-
-    data = data.copy()
-
-    # Butter filter to remove high freq noise (most of human motion is under 20Hz)
-    # Skip this if the Nyquist freq is below 20Hz
-    lowpass_hz = 20
-    if sample_rate / 2 > lowpass_hz:
+    # Butter filter to remove high freq noise.
+    # Default: 20Hz (most of human motion is under 20Hz)
+    # Skip this if the Nyquist freq is too low
+    if data_sample_rate / 2 > cutoff_rate:
         xyz = data[['x', 'y', 'z']].to_numpy()
         # Temporarily replace nans with 0s for butterfilt
         where_nan = bn.anynan(xyz, axis=1)
         xyz[where_nan] = 0
-        xyz = butterfilt(xyz, lowpass_hz, fs=sample_rate, axis=0)
+        xyz = butterfilt(xyz, cutoff_rate, fs=data_sample_rate, axis=0)
         # Now restore nans
         xyz[where_nan] = np.nan
         data[['x', 'y', 'z']] = xyz
         info['lowpassFilterOK'] = 1
+        info['lowpassCutoff(Hz)'] = cutoff_rate
     else:
-        print(f"Skipping lowpass filter: sample_rate {sample_rate} too low")
+        print(f"Skipping lowpass filter: data sample rate {data_sample_rate} too low for cutoff rate {cutoff_rate}")
         info['lowpassFilterOK'] = 0
+
+    data = data.reindex(orig_index,
+                        method='nearest',
+                        tolerance=pd.Timedelta('1s'),
+                        limit=1)
 
     return data, info
 

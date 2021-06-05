@@ -13,14 +13,14 @@ import jpype
 from pywear import processing
 
 
-__all__ = ['read_device']
+__all__ = ['read_device', 'process']
 
 
 def read_device(input_file,
-                resample_uniform=False,
-                remove_noise=False,
-                calibrate_gravity=False,
-                detect_nonwear=False,
+                lowpass_hz=20,
+                calibrate_gravity=True,
+                detect_nonwear=True,
+                resample_hz='uniform',
                 verbose=True):
     """ Read and process device file. Returns a pandas.DataFrame with the
     processed data, and a dict with processing and general info. """
@@ -34,11 +34,11 @@ def read_device(input_file,
     data, info_read = _read_device(input_file, verbose)
     info.update(info_read)
 
-    data, info_process = process(data, info,
-                                 resample_uniform=resample_uniform,
-                                 remove_noise=remove_noise,
+    data, info_process = process(data, info['sampleRate'],
+                                 lowpass_hz=lowpass_hz,
                                  calibrate_gravity=calibrate_gravity,
                                  detect_nonwear=detect_nonwear,
+                                 resample_hz=resample_hz,
                                  verbose=verbose)
     info.update(info_process)
 
@@ -119,33 +119,22 @@ def java_device_read(input_file, output_file, verbose):
     return info
 
 
-def process(data, info_data,
-            resample_uniform=False,
-            remove_noise=False,
-            calibrate_gravity=False,
-            detect_nonwear=False,
-            verbose=False):
+def process(data, sample_rate,
+            lowpass_hz=20,
+            calibrate_gravity=True,
+            detect_nonwear=True,
+            resample_hz='uniform',
+            verbose=True):
     """ Function to run the several data processing steps """
 
     timer = Timer(verbose)
 
     info = {}
 
-    # Noise removal requires the data be uniformly sampled
-    if remove_noise:
-        resample_uniform = True
-
-    if resample_uniform:
-        timer.start("Resampling...")
-        data, info_resample = processing.resample(data, info_data['sampleRate'])
-        info.update(info_resample)
-        timer.stop()
-
-    if remove_noise:
-        timer.start("Removing noise...")
-        data, info_noise = processing.remove_noise(data, info_resample['resampleRate'],
-                                                   resample_uniform=False)  # no need as already resampled
-        info.update(info_noise)
+    if lowpass_hz not in (None, False):
+        timer.start("Lowpass filter...")
+        data, info_lowpass = processing.lowpass(data, sample_rate, lowpass_hz)
+        info.update(info_lowpass)
         timer.stop()
 
     # Used for calibration and nonwear detection
@@ -166,6 +155,15 @@ def process(data, info_data,
         timer.start("Nonwear detection...")
         data, info_nonwear = processing.detect_nonwear(data, stationary_indicator=stationary_indicator)
         info.update(info_nonwear)
+        timer.stop()
+
+    if resample_hz not in (None, False):
+        timer.start("Resampling...")
+        if resample_hz in ('uniform', True):
+            data, info_resample = processing.resample(data, sample_rate)
+        else:
+            data, info_resample = processing.resample(data, resample_hz)
+        info.update(info_resample)
         timer.stop()
 
     return data, info

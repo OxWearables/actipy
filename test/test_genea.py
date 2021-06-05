@@ -16,7 +16,10 @@ class TestGenea(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        data, info = pywear.read_device(DATA)
+        data, info = pywear.read_device(DATA, lowpass_hz=None,
+                                        calibrate_gravity=False,
+                                        detect_nonwear=False,
+                                        resample_hz=None)
         cls.data = data
         cls.info = info
 
@@ -31,9 +34,9 @@ class TestGenea(unittest.TestCase):
 
             with self.subTest("Testing processing...", **testparam):
 
-                _, info = pywear.reader.process(TestGenea.data,
-                                                TestGenea.info,
-                                                **testparam)
+                _, info = pywear.process(TestGenea.data,
+                                         TestGenea.info['sampleRate'],
+                                         **testparam)
 
                 with open(os.path.join(OUTPUTS, testname + '.json')) as f:
                     _info = json.load(f)

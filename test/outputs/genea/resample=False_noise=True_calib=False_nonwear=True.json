@@ -1,8 +1,0 @@
-{
-    "resampleRate": 86.0,
-    "numTicksBeforeResample": 66614400,
-    "numTicksAfterResample": 66836449,
-    "lowpassFilterOK": 1,
-    "numNonWearEpisodes": 0,
-    "nonwearOverall(days)": 0.0
-}

@@ -4,18 +4,18 @@ from itertools import product
 
 
 PROCESS_ARGS = [
-    {'name': 'resample',
-     'arg': 'resample_uniform',
-     'val': [True, False]},
-    {'name': 'noise',
-     'arg': 'remove_noise',
-     'val': [True, False]},
+    {'name': 'lowpass',
+     'arg': 'lowpass_hz',
+     'val': [None, 20]},
     {'name': 'calib',
      'arg': 'calibrate_gravity',
      'val': [True, False]},
     {'name': 'nonwear',
      'arg': 'detect_nonwear',
      'val': [True, False]},
+    {'name': 'resample',
+     'arg': 'resample_hz',
+     'val': ['uniform', None, 50]},
 ]
 
 

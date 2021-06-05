@@ -1,0 +1,23 @@
+{
+    "lowpassFilterOK": 1,
+    "lowpassCutoff(Hz)": 20,
+    "calibErrorBefore(mg)": 84.60452407598495,
+    "calibErrorAfter(mg)": 3.4690042957663536,
+    "calibOK": 1,
+    "calibNumIters": 61,
+    "calibNumSamples": 27894,
+    "calibxIntercept": -0.05113813653588295,
+    "calibyIntercept": -0.01980760507285595,
+    "calibzIntercept": 0.01647740788757801,
+    "calibxSlope": 1.0069561004638672,
+    "calibySlope": 1.000006914138794,
+    "calibzSlope": 1.0219663381576538,
+    "calibxSlopeT": 0.0004429633845575154,
+    "calibySlopeT": -0.0009925405029207468,
+    "calibzSlopeT": 0.00544522050768137,
+    "numNonWearEpisodes": 0,
+    "nonwearOverall(days)": 0.0,
+    "resampleRate": 50,
+    "numTicksBeforeResample": 51391800,
+    "numTicksAfterResample": 25262201
+}

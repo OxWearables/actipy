@@ -31,12 +31,16 @@ def main():
 def gentestref(input_file, outdir, tests):
 
     # Minimal file reading test with no other args
-    data, info_read = pywear.read_device(input_file)
+    data, info_read = pywear.read_device(input_file,
+                                         lowpass_hz=None,
+                                         calibrate_gravity=False,
+                                         detect_nonwear=False,
+                                         resample_hz=None)
     utils.save_dict2json(info_read, os.path.join(outdir, 'read.json'))
 
     for testname, testparam in tests.items():
         print("Running:", testname)
-        _, info_test = pywear.reader.process(data, info_read, **testparam)
+        _, info_test = pywear.process(data, info_read['sampleRate'], **testparam)
         utils.save_dict2json(info_test, os.path.join(outdir, testname + '.json'))
 
 

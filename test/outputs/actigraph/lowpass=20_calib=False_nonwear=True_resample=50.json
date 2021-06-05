@@ -1,0 +1,8 @@
+{
+    "lowpassFilterOK": 0,
+    "numNonWearEpisodes": 0,
+    "nonwearOverall(days)": 0.0,
+    "resampleRate": 50,
+    "numTicksBeforeResample": 2699958,
+    "numTicksAfterResample": 4499951
+}
