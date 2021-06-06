@@ -34,8 +34,8 @@ def resample(data, sample_rate, dropna=False):
 
     # Create a new index with intended sample_rate. Start and end times are
     # rounded to seconds so that the number of ticks (periods) is round
-    start = data.index[0].round('S')
-    end = data.index[-1].round('S')
+    start = data.index[0].ceil('S')
+    end = data.index[-1].floor('S')
     periods = int((end - start).total_seconds() * sample_rate + 1)  # +1 for the last tick
     new_index = pd.date_range(start, end, periods=periods, name='time')
     data = data.reindex(new_index,
