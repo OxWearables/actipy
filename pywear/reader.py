@@ -209,6 +209,8 @@ def npy2df(data):
     data = pd.DataFrame(data)
     data['time'] = data['time'].astype('datetime64[ms]')
     data = data.set_index('time')
+    # Fix if time non-increasing (rarely occurs)
+    data = fix_nonincr_time(data)
 
     return data
 
@@ -293,6 +295,18 @@ def get_gt3x_id(gt3xfile):
         else:
             print("Could not find info.txt file")
             return "unknown"
+
+
+def fix_nonincr_time(data):
+    """ Fix if time non-increasing (rarely occurs) """
+    if (data.index.to_series().diff() <= pd.Timedelta(0)).any():
+        print("Found non-increasing data timestamps. Fixing...")
+        data = data[data.index.to_series()
+                    .cummax()
+                    .diff()
+                    .fillna(pd.Timedelta(1))
+                    > pd.Timedelta(0)]
+    return data
 
 
 class Timer:
