@@ -25,22 +25,18 @@ def read_device(input_file,
     """ Read and process device file. Returns a pandas.DataFrame with the
     processed data, and a dict with processing and general info. """
 
-    info = {}
-
-    # Basic info
-    info['Filename'] = input_file
-    info['Filesize(MB)'] = round(os.path.getsize(input_file) / (1024 * 1024), 1)
-
     data, info_read = _read_device(input_file, verbose)
-    info.update(info_read)
 
-    data, info_process = process(data, info['SampleRate'],
+    data, info_process = process(data, info_read['SampleRate'],
                                  lowpass_hz=lowpass_hz,
                                  calibrate_gravity=calibrate_gravity,
                                  detect_nonwear=detect_nonwear,
                                  resample_hz=resample_hz,
                                  verbose=verbose)
-    info.update(info_process)
+
+    info_misc = processing.misc(data, info_process.get('ResampleRate', info_read['SampleRate']))
+
+    info = {**info_read, **info_misc, **info_process}
 
     return data, info
 
@@ -106,6 +102,8 @@ def _read_device(input_file, verbose=True):
         timer = Timer(verbose)
 
         info = {}
+        info['Filename'] = input_file
+        info['Filesize(MB)'] = round(os.path.getsize(input_file) / (1024 * 1024), 1)
 
         # Temporary diretory to store internal runtime files
         tmpdir = tempfile.mkdtemp()

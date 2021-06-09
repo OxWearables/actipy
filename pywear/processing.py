@@ -249,6 +249,57 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
     return data, info
 
 
+def misc(data, sample_rate):
+
+    info = {}
+
+    # Time start/end
+    strftime = "%Y-%m-%d %H:%M:%S"
+    info['StartTime'] = data.index[0].strftime(strftime)
+    info['EndTime'] = data.index[-1].strftime(strftime)
+
+    tol = 0.1
+    dt = pd.Timedelta(1 / sample_rate, unit='S')
+    t = data.dropna().index.to_series()
+
+    if len(t) > 0:
+
+        # Total weartime
+        info['WearTime(days)'] = (t.groupby(((t.diff() - dt).abs() / dt > tol).cumsum())
+                                   .apply(lambda g: g.index[-1] - g.index[0])
+                                   .sum()
+                                   .total_seconds() / (60 * 60 * 24))
+
+        # How many measurement interrupts
+        info['NumInterrupts'] = ((t.diff() - dt).abs() / dt > tol).sum()
+
+        # Deviation from 1g
+        v = pd.Series(np.abs(np.linalg.norm(data[['x', 'y', 'z']].to_numpy(), axis=1) - 1),
+                      index=data.index)
+
+        # Median absolute deviation
+        # Note that we first aggregate across days
+        info['MADg(mg)'] = v.groupby(v.index.time).median().median() * 1000
+
+        # Percent of deviations greater than 2g
+        # Note that we first aggregate across days
+        info['ADg>2g(%)'] = (v > 2).groupby(v.index.time).mean().mean() * 100
+
+        # Temperature summary
+        if 'T' in data:
+            info['Tmed'], info['Tmin'], info['Tmax'] = data['T'].quantile((.5, 0, 1))
+
+    else:  # all data is NaN
+
+        info['WearTime(days)'] = 0
+        info['NumInterrupts'] = info['MADg(mg)'] = info['AD>2g(%)'] = None
+
+        if 'T' in data:
+            info['Tmed'] = info['Tmin'] = info['Tmax'] = None
+
+    return info
+
+
 def get_stationary_indicator(data, window='10s', stdtol=15 / 1000):
     """ Return a boolean column indicating stationary points """
 
