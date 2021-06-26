@@ -5,5 +5,13 @@
     "DeviceID": "012159",
     "ReadErrors": 0,
     "SampleRate": 85.7,
-    "ReadOK": 1
+    "ReadOK": 1,
+    "StartTime": "2013-02-18 15:48:12",
+    "EndTime": "2013-02-27 15:41:00",
+    "WearTime(days)": 8.994999861111111,
+    "NumInterrupts": 0,
+    "MADg(mg)": 12.779474258422852,
+    "Tmed": 31.600000381469727,
+    "Tmin": 8.800000190734863,
+    "Tmax": 36.20000076293945
 }
