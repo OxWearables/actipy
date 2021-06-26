@@ -127,11 +127,7 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
     xyz = xyz[nonzero]
     if hasT:
         T = stationary_data['T'].to_numpy()
-        # No need to follow the paper that uses a reference temperature
-        # Tref = np.mean(T)
-        # dT = T - Tref
-        dT = T
-        dT = dT[nonzero]
+        T = T[nonzero]
     del stationary_data
     del nonzero
 
@@ -141,14 +137,13 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
     best_slope = np.copy(slope)
 
     if hasT:
-        slopeT = np.array([0.0, 0.0, 0.0], dtype=dT.dtype)
+        slopeT = np.array([0.0, 0.0, 0.0], dtype=T.dtype)
         best_slopeT = np.copy(slopeT)
 
     curr = xyz
     target = curr / np.linalg.norm(curr, axis=1, keepdims=True)
 
     errors = np.linalg.norm(curr - target, axis=1)
-    # err = np.sqrt(np.mean(np.square(errors)))  # root mean square error (RMSE)
     err = np.median(errors)  # MAE more robust than RMSE. This is different from the paper
     init_err = err
     best_err = 1e16
@@ -181,8 +176,8 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
             inp = curr[:, k]
             out = target[:, k]
             if hasT:
-                inp = np.column_stack((inp, dT))
-            inp = sm.add_constant(inp, prepend=True)  # add intercept term
+                inp = np.column_stack((inp, T))
+            inp = sm.add_constant(inp, prepend=True)
             params = sm.WLS(out, inp, weights=weights).fit().params
             # In the following,
             # intercept == params[0]
@@ -196,12 +191,11 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
         # Update current solution and target
         curr = intercept + (xyz * slope)
         if hasT:
-            curr = curr + (dT[:, None] * slopeT)
+            curr = curr + (T[:, None] * slopeT)
         target = curr / np.linalg.norm(curr, axis=1, keepdims=True)
 
         # Update errors
         errors = np.linalg.norm(curr - target, axis=1)
-        # err = np.sqrt(np.mean(np.square(errors)))
         err = np.median(errors)
         err_improv = (best_err - err) / best_err
 
@@ -216,19 +210,17 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
 
     info['CalibErrorAfter(mg)'] = best_err * 1000
 
-    if best_err > ERR_TOL:
+    if (best_err > ERR_TOL) or (it + 1 == MAXITER):
         info['CalibOK'] = 0
 
         return data, info
 
     else:
-        # Calibrate
         data = data.copy()
         data[['x', 'y', 'z']] = (best_intercept
                                  + best_slope * data[['x', 'y', 'z']].to_numpy())
         if hasT:
             data[['x', 'y', 'z']] = (data[['x', 'y', 'z']]
-                                     # + best_slopeT * (data['T'].to_numpy()[:,None]-Tref))
                                      + best_slopeT * (data['T'].to_numpy()[:, None]))
 
         info['CalibOK'] = 1
@@ -244,7 +236,6 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
             info['CalibxSlopeT'] = best_slopeT[0]
             info['CalibySlopeT'] = best_slopeT[1]
             info['CalibzSlopeT'] = best_slopeT[2]
-            # info['CalibTref'] = Tref
 
     return data, info
 
