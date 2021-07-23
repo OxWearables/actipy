@@ -252,8 +252,8 @@ def get_axivity_id(cwafile):
 
     header = f.read(2)
     if header == b'MD':
-        # blockSize = struct.unpack('H', f.read(2))[0]
-        # performClear = struct.unpack('B', f.read(1))[0]
+        block_size = struct.unpack('H', f.read(2))[0]
+        perform_clear = struct.unpack('B', f.read(1))[0]
         device_id = struct.unpack('H', f.read(2))[0]
     else:
         print(f"Could not find device id for {cwafile}")
