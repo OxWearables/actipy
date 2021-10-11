@@ -6,6 +6,7 @@ import tempfile
 import atexit
 import zipfile
 import gzip
+import pathlib
 import numpy as np
 import pandas as pd
 import jpype
@@ -174,7 +175,7 @@ def java_read_device(input_file, output_file, verbose):
 def setupJVM():
     """ Start JVM. Shutdown at program exit """
     if not jpype.isJVMStarted():
-        jpype.addClassPath(os.path.join(os.environ['PYWEARPATH'], 'pywear/'))
+        jpype.addClassPath(pathlib.Path(__file__).parent)
         jpype.startJVM(convertStrings=False)
 
         @atexit.register
