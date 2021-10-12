@@ -2,7 +2,7 @@ import os
 import unittest
 import json
 
-import pywear
+import actipy
 from test import utils
 
 DATA = 'data/sample.cwa.gz'
@@ -16,7 +16,7 @@ class TestAxivity(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        data, info = pywear.read_device(DATA, lowpass_hz=None,
+        data, info = actipy.read_device(DATA, lowpass_hz=None,
                                         calibrate_gravity=False,
                                         detect_nonwear=False,
                                         resample_hz=None)
@@ -34,7 +34,7 @@ class TestAxivity(unittest.TestCase):
 
             with self.subTest("Testing processing...", **testparam):
 
-                _, info = pywear.process(TestAxivity.data,
+                _, info = actipy.process(TestAxivity.data,
                                          TestAxivity.info['SampleRate'],
                                          **testparam)
 

@@ -3,7 +3,7 @@ It runs the tests without any checks and saving the outputs.
 Run with `python -m test.gentestref` from project root.
 """
 import os
-import pywear
+import actipy
 from test import utils
 
 
@@ -31,7 +31,7 @@ def main():
 def gentestref(input_file, outdir, tests):
 
     # Minimal file reading test with no other args
-    data, info_read = pywear.read_device(input_file,
+    data, info_read = actipy.read_device(input_file,
                                          lowpass_hz=None,
                                          calibrate_gravity=False,
                                          detect_nonwear=False,
@@ -40,7 +40,7 @@ def gentestref(input_file, outdir, tests):
 
     for testname, testparam in tests.items():
         print("Running:", testname)
-        _, info_test = pywear.process(data, info_read['SampleRate'], **testparam)
+        _, info_test = actipy.process(data, info_read['SampleRate'], **testparam)
         utils.save_dict2json(info_test, os.path.join(outdir, testname + '.json'))
 
 

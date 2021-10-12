@@ -1,13 +1,13 @@
-# Pywear
+# actipy
 
-Python tool to process Axivity (`.cwa`), GENEActiv (`.bin`) and Actigraph (`.gt3x`) wearables data.
+Python package to process Axivity (`.cwa`), GENEActiv (`.bin`) and Actigraph (`.gt3x`) files.
 
 ## Usage
 
 ```python
-import pywear
+import actipy
 
-data, info = pywear.read_device("/path/to/data/sample.cwa",
+data, info = actipy.read_device("sample.cwa",
                                  lowpass_hz=20,
                                  calibrate_gravity=True,
                                  detect_nonwear=True,
@@ -24,7 +24,7 @@ data, info = pywear.read_device("/path/to/data/sample.cwa",
 # ...                           ...       ...       ...        ...
 
 # info [dict]
-# Filename              : data/sample.cwa
+# Filename              : sample.cwa
 # Filesize(MB)          : 209
 # DeviceID              : 1020
 # Device                : Axivity
@@ -43,24 +43,3 @@ data, info = pywear.read_device("/path/to/data/sample.cwa",
 # ...
 
 ```
-
-## Installation
-
-Poor man's installation steps in Linux:
-
-```bash
-# Clone repository
-git clone https://github.com/activityMonitoring/pywear.git /path/to/pywear
-
-# Export the repo path to a PYWEARPATH system variable, required by Pywear
-echo export PYWEARPATH="/path/to/pywear" >> ~/.bashrc
-
-# Compile java files
-javac /path/to/pywear/pywear/*.java
-
-# Make repo path visible to Python
-echo export PYTHONPATH="$PYWEARPATH:$PYTHONPATH" >> ~/.bashrc
-```
-
-### Dependencies
-An anaconda installation should cover most of the dependencies. One special package required is [`JPype`](https://jpype.readthedocs.io/en/devel/install.html) which allows interfacing with Java (in which the core parsing code is written).

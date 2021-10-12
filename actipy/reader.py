@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import jpype
 
-from pywear import processing
+from actipy import processing
 
 
 __all__ = ['read_device', 'process']
