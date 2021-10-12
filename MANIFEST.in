@@ -1,0 +1,4 @@
+include actipy/*.java
+include actipy/*.class
+recursive-exclude test *
+
