@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-import bottleneck as bn
 import scipy.signal as signal
 import statsmodels.api as sm
 
@@ -56,7 +55,7 @@ def lowpass(data, data_sample_rate, cutoff_rate=20):
     if data_sample_rate / 2 > cutoff_rate:
         xyz = data[['x', 'y', 'z']].to_numpy()
         # Temporarily replace nans with 0s for butterfilt
-        where_nan = bn.anynan(xyz, axis=1)
+        where_nan = np.isnan(xyz).any(1)
         xyz[where_nan] = 0
         xyz = butterfilt(xyz, cutoff_rate, fs=data_sample_rate, axis=0)
         # Now restore nans
