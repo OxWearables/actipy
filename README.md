@@ -1,6 +1,18 @@
 # actipy
 
-Python package to process Axivity (`.cwa`), GENEActiv (`.bin`) and Actigraph (`.gt3x`) files.
+Python package to process Axivity3 (`.cwa`), GENEActiv (`.bin`) and Actigraph (`.gt3x`) files.
+
+## Installation
+
+### Pip
+```bash
+pip install actipy
+```
+
+### Conda
+```bash
+# TODO
+```
 
 ## Usage
 
