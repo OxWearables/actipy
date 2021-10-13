@@ -50,6 +50,8 @@ dist
 *.egg-info
 .eggs
 .pypirc
+# conda recipe
+conda-recipe
 
 # tox testing tool
 .tox
