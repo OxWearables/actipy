@@ -4,15 +4,17 @@ Python package to process Axivity3 (`.cwa`), GENEActiv (`.bin`) and Actigraph (`
 
 ## Installation
 
-### Pip
+#### Pip
 ```bash
 pip install actipy
 ```
 
-### Conda
+#### Conda
 ```bash
-# TODO
+conda install -c oxwear actipy
 ```
+
+*Note:* Use either Pip or Conda, not both.
 
 ## Usage
 
