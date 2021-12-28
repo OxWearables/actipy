@@ -4,13 +4,23 @@ import scipy.signal as signal
 import statsmodels.api as sm
 
 
-__all__ = ['lowpass', 'detect_nonwear', 'calibrate_gravity', 'get_stationary_indicator', 'resample']
+__all__ = ['lowpass', 'calibrate_gravity', 'detect_nonwear', 'resample', 'get_stationary_indicator']
 
 
 def resample(data, sample_rate, dropna=False):
-    """ Resample data to sample_rate. This uses simple nearest neighbor
-    resampling, so be sure to use antialiasing filters if using a rate
-    much lower than data's original rate. """
+    """ 
+    Nearest neighbor resampling. For downsampling, it is recommended to first
+    apply an antialiasing filter.
+
+    :param data: A pandas.DataFrame of acceleration time-series. The index must be a DateTimeIndex.
+    :type data: pandas.DataFrame.
+    :param sample_rate: Target sample rate (Hz) to achieve.
+    :type sample_rate: int or float
+    :param dropna: Whether to drop NaN values after resampling. Defaults to False.
+    :type dropna: bool, optional
+    :return: Processed data and processing info.
+    :rtype: (pandas.DataFrame, dict)
+    """
 
     info = {}
 
@@ -43,6 +53,18 @@ def resample(data, sample_rate, dropna=False):
 
 
 def lowpass(data, data_sample_rate, cutoff_rate=20):
+    """
+    Apply Butterworth low-pass filter.
+
+    :param data: A pandas.DataFrame of acceleration time-series. The index must be a DateTimeIndex.
+    :type data: pandas.DataFrame.
+    :param data_sample_rate: The data's original sample rate.
+    :type data_sample_rate: int or float
+    :param cutoff_rate: Cutoff (Hz) for low-pass filter. Defaults to 20.
+    :type cutoff_rate: int, optional
+    :return: Processed data and processing info.
+    :rtype: (pandas.DataFrame, dict)
+    """
 
     info = {}
 
@@ -76,7 +98,24 @@ def lowpass(data, data_sample_rate, cutoff_rate=20):
 
 
 def detect_nonwear(data, patience='90m', stationary_indicator=None, drop=False):
-    """ Detect nonwear episodes based on long durations of no movement """
+    """ 
+    Detect nonwear episodes based on long periods of no movement.
+
+    :param data: A pandas.DataFrame of acceleration time-series. The index must be a DateTimeIndex.
+    :type data: pandas.DataFrame.
+    :param patience: Minimum length of the stationary period to be flagged as
+        non-wear. Defaults to 90 minutes ("90m").
+    :type patience: str, optional
+    :param stationary_indicator: A boolean pandas.Series indexed as `data`
+        indicating stationary (low movement) periods. If None, it will be
+        automatically inferred. Defaults to None.
+    :type stationary_indicator: pandas.Series, optional
+    :param drop: Wheter to drop the non-wear periods. If False, the non-wear
+        periods will be filled with NaNs. Defaults to False.
+    :type drop: bool, optional
+    :return: Processed data and processing info.
+    :rtype: (pandas.DataFrame, dict)
+    """
 
     info = {}
 
@@ -104,7 +143,21 @@ def detect_nonwear(data, patience='90m', stationary_indicator=None, drop=False):
 
 
 def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
-    """ Gravity calibration method of https://pubmed.ncbi.nlm.nih.gov/25103964/ """
+    """ 
+    Gravity calibration method of van Hees et al. 2014 (https://pubmed.ncbi.nlm.nih.gov/25103964/)
+
+    :param data: A pandas.DataFrame of acceleration time-series. It must contain
+        at least columns `x,y,z` and the index must be a DateTimeIndex.
+    :type data: pandas.DataFrame.
+    :param calib_cube: Calibration cube criteria. See van Hees et al. 2014 for details. Defaults to 0.3.
+    :type calib_cube: float, optional.
+    :param stationary_indicator: A boolean pandas.Series indexed as `data`
+        indicating stationary (low movement) periods. If None, it will be
+        automatically inferred. Defaults to None.
+    :type stationary_indicator: pandas.Series, optional
+    :return: Processed data and processing info.
+    :rtype: (pandas.DataFrame, dict)
+    """
 
     info = {}
 
@@ -240,6 +293,7 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
 
 
 def misc(data, sample_rate):
+    """ Additional miscellaneous data info """
 
     info = {}
 
@@ -287,7 +341,20 @@ def misc(data, sample_rate):
 
 
 def get_stationary_indicator(data, window='10s', stdtol=15 / 1000):
-    """ Return a boolean column indicating stationary points """
+    """ 
+    Return a boolean pandas.Series indicating stationary (low movement) periods.
+
+    :param data: A pandas.DataFrame of acceleration time-series. It must contain
+        at least columns `x,y,z` and the index must be a DateTimeIndex.
+    :type data: pandas.DataFrame.
+    :param window: Rolling window to use to check for stationary periods. Defaults to 10 seconds ("10s").
+    :type window: str, optional
+    :param stdtol: Standard deviation under which the window is considered stationary. 
+        Defaults to 15 milligravity (0.015).
+    :type stdtol: float, optional
+    :return: Boolean pandas.Series indexed as `data` indicating stationary periods.
+    :rtype: pandas.Series
+    """
 
     # What happens if there are NaNs?
     # Ans: It evaluates to False so we're good
@@ -301,6 +368,7 @@ def get_stationary_indicator(data, window='10s', stdtol=15 / 1000):
 
 
 def butterfilt(x, cutoffs, fs, order=8, axis=0):
+    """ Butterworth filter """
     nyq = 0.5 * fs
     if isinstance(cutoffs, tuple):
         hicut, lowcut = cutoffs

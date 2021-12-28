@@ -23,8 +23,28 @@ def read_device(input_file,
                 detect_nonwear=True,
                 resample_hz='uniform',
                 verbose=True):
-    """ Read and process device file. Returns a pandas.DataFrame with the
-    processed data, and a dict with processing and general info. """
+    """ 
+    Read and process accelerometer device file. Returns a pandas.DataFrame with
+    the processed data and a dict with processing info. 
+
+    :param input_file: Path to accelerometer file.
+    :type input_file: str
+    :param lowpass_hz: Cutoff (Hz) for low-pass filter. Defaults to 20. Pass
+        None or False to disable.
+    :type lowpass_hz: int, optional
+    :param calibrate_gravity: Whether to perform gravity calibration. Defaults to True.
+    :type calibrate_gravity: bool, optional
+    :param detect_nonwear: Whether to perform non-wear detection. Defaults to True. 
+    :type detect_nonwear: bool, optional
+    :param resample_hz: Target frequency (Hz) to resample the signal. If
+        "uniform", use the implied frequency (use this option to fix any device
+        sampling errors). Pass None to disable. Defaults to "uniform".
+    :type resample_hz: str or int, optional
+    :param verbose: Verbosity, defaults to True.
+    :type verbose: bool, optional
+    :return: Processed data and processing info.
+    :rtype: (pandas.DataFrame, dict)
+    """
 
     data, info_read = _read_device(input_file, verbose)
 
@@ -48,7 +68,31 @@ def process(data, sample_rate,
             detect_nonwear=True,
             resample_hz='uniform',
             verbose=True):
-    """ Function to run the several data processing steps """
+    """ 
+    Process a pandas.DataFrame of acceleration time-series. Returns a
+    pandas.DataFrame with the processed data and a dict with processing info.
+
+    :param data: A pandas.DataFrame of acceleration time-series. It must contain
+        at least columns `x,y,z` and the index must be a DateTimeIndex.
+    :type data: pandas.DataFrame.
+    :param sample_rate: The data's sample rate (Hz).
+    :type sample_rate: int or float
+    :param lowpass_hz: Cutoff (Hz) for low-pass filter. Defaults to 20. Pass
+        None or False to disable.
+    :type lowpass_hz: int, optional
+    :param calibrate_gravity: Whether to perform gravity calibration. Defaults to True.
+    :type calibrate_gravity: bool, optional
+    :param detect_nonwear: Whether to perform non-wear detection. Defaults to True. 
+    :type detect_nonwear: bool, optional
+    :param resample_hz: Target frequency (Hz) to resample the signal. If
+        "uniform", use the implied frequency (use this option to fix any device
+        sampling errors). Pass None to disable. Defaults to "uniform".
+    :type resample_hz: str or int, optional
+    :param verbose: Verbosity, defaults to True.
+    :type verbose: bool, optional
+    :return: Processed data and processing info.
+    :rtype: (pandas.DataFrame, dict)
+    """
 
     timer = Timer(verbose)
 
