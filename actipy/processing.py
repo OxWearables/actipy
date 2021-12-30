@@ -142,7 +142,7 @@ def detect_nonwear(data, patience='90m', stationary_indicator=None, drop=False):
     return data, info
 
 
-def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
+def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):  # noqa: C901
     """ 
     Gravity calibration method of van Hees et al. 2014 (https://pubmed.ncbi.nlm.nih.gov/25103964/)
 
