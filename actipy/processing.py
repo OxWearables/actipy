@@ -196,7 +196,7 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
     target = curr / np.linalg.norm(curr, axis=1, keepdims=True)
 
     errors = np.linalg.norm(curr - target, axis=1)
-    err = np.median(errors)  # MAE more robust than RMSE. This is different from the paper
+    err = np.mean(errors)  # MAE more robust than RMSE. This is different from the paper
     init_err = err
     best_err = 1e16
 
@@ -248,7 +248,7 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):
 
         # Update errors
         errors = np.linalg.norm(curr - target, axis=1)
-        err = np.median(errors)
+        err = np.mean(errors)
         err_improv = (best_err - err) / best_err
 
         if err < best_err:
