@@ -146,14 +146,14 @@ def _read_device(input_file, verbose=True):
 
         timer = Timer(verbose)
 
-        info = {}
-        info['Filename'] = input_file
-        info['Filesize(MB)'] = round(os.path.getsize(input_file) / (1024 * 1024), 1)
-
         # Temporary diretory to store internal runtime files
         tmpdir = tempfile.mkdtemp()
         # Temporary file to store parsed device data
         tmpout = os.path.join(tmpdir, "tmpout.npy")
+
+        info = {}
+        info['Filename'] = input_file
+        info['Filesize(MB)'] = round(os.path.getsize(input_file) / (1024 * 1024), 1)
 
         if input_file.lower().endswith((".gz", ".zip")):
             timer.start("Decompressing...")
