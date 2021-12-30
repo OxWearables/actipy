@@ -1,29 +1,41 @@
-import pathlib
-from setuptools import setup, find_packages
+import setuptools
+import codecs
+import os.path
 
-# The directory containing this file
-HERE = pathlib.Path(__file__).parent
 
-# The text of the README file
-README = (HERE / "README.md").read_text()
+def read(rel_path):
+    here = os.path.abspath(os.path.dirname(__file__))
+    with codecs.open(os.path.join(here, rel_path), 'r') as fp:
+        return fp.read()
 
-# This call to setup() does all the work
-setup(
+def get_string(string, rel_path="actipy/__init__.py"):
+    for line in read(rel_path).splitlines():
+        if line.startswith(string):
+            delim = '"' if '"' in line else "'"
+            return line.split(delim)[1]
+    else:
+        raise RuntimeError(f"Unable to find {string}.")
+
+with open("README.md", "r") as fh:
+    long_description = fh.read()
+
+setuptools.setup(
     name="actipy",
-    version="0.0.1",
+    python_requires=">=3.7",
+    version=get_string("__version__"),
     description="Python package to process wearable accelerometer data",
-    long_description=README,
+    long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/activityMonitoring/actipy",
-    author="Shing Chan",
-    author_email="cshing.m@gmail.com",
-    license="MIT",
+    author=get_string("__author__"),
+    author_email=get_string("__email__"),
+    license=get_string("__license__"),
     classifiers=[
-        "License :: OSI Approved :: MIT License",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.7",
+        "Operating System :: MacOS :: MacOS X",
+        "Operating System :: Unix",
     ],
-    packages=find_packages(exclude=("test",)),
+    packages=setuptools.find_packages(exclude=("test",)),
     include_package_data=True,
     install_requires=[
         "numpy",
