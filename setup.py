@@ -40,8 +40,8 @@ setuptools.setup(
     install_requires=[
         "numpy",
         "scipy",
-        "pandas",
-        "statsmodels",
-        "Jpype1",
+        "pandas>=1.2.5",
+        "statsmodels>=0.12.2",
+        "Jpype1==1.3.0",
     ],
 )
