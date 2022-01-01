@@ -14,6 +14,8 @@ import os
 import sys
 sys.path.insert(0, os.path.abspath('../../'))
 
+from actipy import __version__
+
 
 # -- Project information -----------------------------------------------------
 
@@ -21,8 +23,9 @@ project = 'actipy'
 copyright = '2021, Shing Chan'
 author = 'Shing Chan'
 
+version = __version__
 # The full version, including alpha/beta/rc tags
-# release = ''
+release = version
 
 
 # -- General configuration ---------------------------------------------------
