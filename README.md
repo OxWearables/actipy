@@ -59,3 +59,6 @@ data, info = actipy.read_device("sample.cwa",
 ```
 
 See the [documentation](https://actipy.readthedocs.io/en/latest/) for more details.
+
+## License
+See [license](LICENSE.md) before using this software.
