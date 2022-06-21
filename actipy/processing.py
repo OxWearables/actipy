@@ -229,7 +229,7 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):  # noqa:
             out = target[:, k]
             if hasT:
                 inp = np.column_stack((inp, T))
-            inp = sm.add_constant(inp, prepend=True)
+            inp = sm.add_constant(inp, prepend=True, has_constant='add')
             params = sm.WLS(out, inp, weights=weights).fit().params
             # In the following,
             # intercept == params[0]
