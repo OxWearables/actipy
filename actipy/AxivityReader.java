@@ -1,6 +1,6 @@
 /**
  * Based on the OpenMovement implementation:
- * https://github.com/digitalinteraction/openmovement/blob/72c992b0ea524275d898e86181c5b38a9622c529/Software/AX3/cwa-convert/java/src/newcastle/cwa/CwaBlock.java#L222-L240
+ * https://github.com/digitalinteraction/openmovement/blob/72c992b0ea524275d898e86181c5b38a9622c529/Software/AX3/cwa-convert/java/src/newcastle/cwa/CwaBlock.java
 */
 import java.io.FileInputStream;
 import java.nio.ByteOrder;
