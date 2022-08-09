@@ -13,6 +13,7 @@
     "CalibxSlopeT": 0.00044444590457715094,
     "CalibySlopeT": -0.0010144083062186837,
     "CalibzSlopeT": 0.005118228495121002,
-    "NumNonwearEpisodes": 0,
-    "NonwearTime(days)": 0.0
+    "WearTime(days)": 5.846723148148148,
+    "NonwearTime(days)": 0.0,
+    "NumNonwearEpisodes": 0
 }
