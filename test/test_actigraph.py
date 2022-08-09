@@ -40,4 +40,6 @@ class TestActigraph(unittest.TestCase):
 
                 with open(os.path.join(OUTPUTS, testname + '.json')) as f:
                     _info = json.load(f)
-                self.assertDictEqual(info, _info)
+
+                for (_k, _v), (k, v) in zip(_info.items(), info.items()):
+                    self.assertAlmostEqual(_v, v, places=5)
