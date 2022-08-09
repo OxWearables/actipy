@@ -8,7 +8,7 @@ __all__ = ['lowpass', 'calibrate_gravity', 'detect_nonwear', 'resample', 'get_st
 
 
 def resample(data, sample_rate, dropna=False):
-    """ 
+    """
     Nearest neighbor resampling. For downsampling, it is recommended to first
     apply an antialiasing filter.
 
@@ -98,7 +98,7 @@ def lowpass(data, data_sample_rate, cutoff_rate=20):
 
 
 def detect_nonwear(data, patience='90m', stationary_indicator=None, drop=False):
-    """ 
+    """
     Detect nonwear episodes based on long periods of no movement.
 
     :param data: A pandas.DataFrame of acceleration time-series. The index must be a DateTimeIndex.
@@ -143,7 +143,7 @@ def detect_nonwear(data, patience='90m', stationary_indicator=None, drop=False):
 
 
 def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):  # noqa: C901
-    """ 
+    """
     Gravity calibration method of van Hees et al. 2014 (https://pubmed.ncbi.nlm.nih.gov/25103964/)
 
     :param data: A pandas.DataFrame of acceleration time-series. It must contain
@@ -341,7 +341,7 @@ def misc(data, sample_rate):
 
 
 def get_stationary_indicator(data, window='10s', stdtol=15 / 1000):
-    """ 
+    """
     Return a boolean pandas.Series indicating stationary (low movement) periods.
 
     :param data: A pandas.DataFrame of acceleration time-series. It must contain
@@ -349,7 +349,7 @@ def get_stationary_indicator(data, window='10s', stdtol=15 / 1000):
     :type data: pandas.DataFrame.
     :param window: Rolling window to use to check for stationary periods. Defaults to 10 seconds ("10s").
     :type window: str, optional
-    :param stdtol: Standard deviation under which the window is considered stationary. 
+    :param stdtol: Standard deviation under which the window is considered stationary.
         Defaults to 15 milligravity (0.015).
     :type stdtol: float, optional
     :return: Boolean pandas.Series indexed as `data` indicating stationary periods.

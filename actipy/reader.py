@@ -23,9 +23,9 @@ def read_device(input_file,
                 detect_nonwear=True,
                 resample_hz='uniform',
                 verbose=True):
-    """ 
+    """
     Read and process accelerometer device file. Returns a pandas.DataFrame with
-    the processed data and a dict with processing info. 
+    the processed data and a dict with processing info.
 
     :param input_file: Path to accelerometer file.
     :type input_file: str
@@ -34,7 +34,7 @@ def read_device(input_file,
     :type lowpass_hz: int, optional
     :param calibrate_gravity: Whether to perform gravity calibration. Defaults to True.
     :type calibrate_gravity: bool, optional
-    :param detect_nonwear: Whether to perform non-wear detection. Defaults to True. 
+    :param detect_nonwear: Whether to perform non-wear detection. Defaults to True.
     :type detect_nonwear: bool, optional
     :param resample_hz: Target frequency (Hz) to resample the signal. If
         "uniform", use the implied frequency (use this option to fix any device
@@ -68,7 +68,7 @@ def process(data, sample_rate,
             detect_nonwear=True,
             resample_hz='uniform',
             verbose=True):
-    """ 
+    """
     Process a pandas.DataFrame of acceleration time-series. Returns a
     pandas.DataFrame with the processed data and a dict with processing info.
 
@@ -82,7 +82,7 @@ def process(data, sample_rate,
     :type lowpass_hz: int, optional
     :param calibrate_gravity: Whether to perform gravity calibration. Defaults to True.
     :type calibrate_gravity: bool, optional
-    :param detect_nonwear: Whether to perform non-wear detection. Defaults to True. 
+    :param detect_nonwear: Whether to perform non-wear detection. Defaults to True.
     :type detect_nonwear: bool, optional
     :param resample_hz: Target frequency (Hz) to resample the signal. If
         "uniform", use the implied frequency (use this option to fix any device
