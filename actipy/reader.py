@@ -55,9 +55,7 @@ def read_device(input_file,
                                  resample_hz=resample_hz,
                                  verbose=verbose)
 
-    info_misc = processing.misc(data, info_process.get('ResampleRate', info_read['SampleRate']))
-
-    info = {**info_read, **info_misc, **info_process}
+    info = {**info_read, **info_process}
 
     return data, info
 
@@ -162,10 +160,12 @@ def _read_device(input_file, verbose=True):
 
         # Device info
         info_device = get_device_info(input_file)
+        info.update(info_device)
 
         # Parsing. Main action happens here.
         timer.start("Reading file...")
-        info_read = java_read_device(input_file, tmpout, verbose)
+        info_java = java_read_device(input_file, tmpout, verbose)
+        info.update(info_java)
         timer.stop()
 
         timer.start("Converting to dataframe...")
@@ -174,10 +174,17 @@ def _read_device(input_file, verbose=True):
         # Fix if time non-increasing (rarely occurs)
         data, nonincr_time_errs = fix_nonincr_time(data)
         # Update read errors. Non-increasing time errors scaled by sample rate
-        info_read['ReadErrors'] += int(np.ceil(nonincr_time_errs / info_read['SampleRate']))
+        info['ReadErrors'] += int(np.ceil(nonincr_time_errs / info['SampleRate']))
         timer.stop()
 
-        info.update({**info_device, **info_read})
+        # Start/end times, wear time, interrupts
+        t = data.index.to_series()
+        strftime = "%Y-%m-%d %H:%M:%S"
+        info['StartTime'], info['EndTime'] = t[0].strftime(strftime), t[-1].strftime(strftime)
+        info['NumTicks'] = len(data)
+        wear_time, num_interrupts = processing.get_wear_time(t)
+        info['WearTime(days)'] = wear_time / (60 * 60 * 24)
+        info['NumInterrupts'] = num_interrupts
 
         return data, info
 

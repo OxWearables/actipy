@@ -129,8 +129,11 @@ def detect_nonwear(data, patience='90m', stationary_indicator=None, drop=False):
                            .apply(lambda g: g.index[-1] - g.index[0]))
     nonwear_len = stationary_len[stationary_len > pd.Timedelta(patience)]
 
+    nonwear_time = nonwear_len.sum().total_seconds()
+    wear_time, _ = get_wear_time(data.index.to_series())
+    info['WearTime(days)'] = (wear_time - nonwear_time) / (60 * 60 * 24)  # update wear time
+    info['NonwearTime(days)'] = nonwear_time / (60 * 60 * 24)
     info['NumNonwearEpisodes'] = len(nonwear_len)
-    info['NonwearTime(days)'] = nonwear_len.sum().total_seconds() / (60 * 60 * 24)
 
     # Flag nonwear
     nonwear_indicator = group.isin(nonwear_len.index)
@@ -292,54 +295,6 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):  # noqa:
     return data, info
 
 
-def misc(data, sample_rate):
-    """ Additional miscellaneous data info """
-
-    info = {}
-
-    # Time start/end
-    strftime = "%Y-%m-%d %H:%M:%S"
-    info['StartTime'] = data.index[0].strftime(strftime)
-    info['EndTime'] = data.index[-1].strftime(strftime)
-
-    TOL = 0.1
-    dt = pd.Timedelta(1 / sample_rate, unit='S')
-    t = data.dropna().index.to_series()
-
-    if len(t) > 0:
-
-        # Total weartime
-        info['WearTime(days)'] = (t.groupby(((t.diff() - dt).abs() / dt > TOL).cumsum())
-                                   .apply(lambda g: g.index[-1] - g.index[0])
-                                   .sum()
-                                   .total_seconds() / (60 * 60 * 24))
-
-        # How many measurement interrupts
-        info['NumInterrupts'] = ((t.diff() - dt).abs() / dt > TOL).sum()
-
-        # Deviation from 1g
-        v = pd.Series(np.abs(np.linalg.norm(data[['x', 'y', 'z']].to_numpy(), axis=1) - 1),
-                      index=data.index)
-
-        # Median absolute deviation
-        # Note that we first aggregate across days
-        info['MADg(mg)'] = v.groupby(v.index.time).median().median() * 1000
-
-        # Temperature summary
-        if 'T' in data:
-            info['Tmed'], info['Tmin'], info['Tmax'] = data['T'].quantile((.5, 0, 1))
-
-    else:  # all data is NaN
-
-        info['WearTime(days)'] = 0
-        info['NumInterrupts'] = info['MADg(mg)'] = np.nan
-
-        if 'T' in data:
-            info['Tmed'] = info['Tmin'] = info['Tmax'] = np.nan
-
-    return info
-
-
 def get_stationary_indicator(data, window='10s', stdtol=15 / 1000):
     """
     Return a boolean pandas.Series indicating stationary (low movement) periods.
@@ -367,8 +322,17 @@ def get_stationary_indicator(data, window='10s', stdtol=15 / 1000):
     return stationary_indicator
 
 
+def get_wear_time(t, tol=0.1):
+    """ Return wear time in seconds and number of interrupts. """
+    tdiff = t.diff()
+    ttol = tdiff.mode().max() * (1 + tol)
+    total_time = tdiff[tdiff <= ttol].sum().total_seconds()
+    num_interrupts = (tdiff > ttol).sum()
+    return total_time, num_interrupts
+
+
 def butterfilt(x, cutoffs, fs, order=8, axis=0):
-    """ Butterworth filter """
+    """ Butterworth filter. """
     nyq = 0.5 * fs
     if isinstance(cutoffs, tuple):
         hicut, lowcut = cutoffs
