@@ -38,10 +38,10 @@ setuptools.setup(
     packages=setuptools.find_packages(exclude=("test",)),
     include_package_data=True,
     install_requires=[
-        "numpy",
-        "scipy",
-        "pandas>=1.2.5",
-        "statsmodels>=0.12.2",
+        "numpy==1.21.6",
+        "scipy==1.7.3",
+        "pandas==1.3.5",
+        "statsmodels==0.13.2",
         "Jpype1==1.3.0",
     ],
 )
