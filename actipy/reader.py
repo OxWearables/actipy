@@ -253,8 +253,8 @@ def npy2df(data):
     """ Convert numpy array to pandas dataframe.
     Also parse time and set it as index. """
 
-    data = pd.DataFrame(data)
-    data['time'] = data['time'].astype('datetime64[ms]')
+    data = pd.DataFrame({col: data[col] for col in data.dtype.names})
+    data['time'] = pd.to_datetime(data['time'], unit='ms')
     data = data.set_index('time')
 
     return data
