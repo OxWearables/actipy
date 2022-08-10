@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import scipy.signal as signal
 import statsmodels.api as sm
+import warnings
 
 
 __all__ = ['lowpass', 'calibrate_gravity', 'detect_nonwear', 'resample', 'get_stationary_indicator']
@@ -311,13 +312,23 @@ def get_stationary_indicator(data, window='10s', stdtol=15 / 1000):
     :rtype: pandas.Series
     """
 
-    # What happens if there are NaNs?
-    # Ans: It evaluates to False so we're good
-    stationary_indicator = ((data[['x', 'y', 'z']]
-                            .rolling(window)
-                            .std()
-                            < stdtol)
-                            .all(axis=1))
+    def fn(data):
+        return (
+            (data[['x', 'y', 'z']]
+             .rolling(window)
+             .std()
+             < stdtol)
+            .all(axis=1)
+        )
+
+    stationary_indicator = pd.concat(
+        chunker(
+            data,
+            chunksize='4h',
+            leeway=window,
+            fn=fn
+        )
+    )
 
     return stationary_indicator
 
@@ -353,3 +364,41 @@ def butterfilt(x, cutoffs, fs, order=8, axis=0):
     y = signal.sosfiltfilt(sos, x, axis=axis)
 
     return y
+
+
+def chunker(data, chunksize='4h', leeway='0h', fn=None, fntrim=True):
+    """ Return chunk generator for a given datetime-indexed DataFrame.
+    A `leeway` parameter can be used to obtain overlapping chunks (e.g. leeway='30m').
+    If a function `fn` is provided, it is applied to each chunk. The leeway is
+    trimmed after function application by default (set `fntrim=False` to skip).
+    """
+
+    chunksize = pd.Timedelta(chunksize)
+    leeway = pd.Timedelta(leeway)
+    zero = pd.Timedelta(0)
+
+    t0, tf = data.index[0], data.index[-1]
+
+    for ti in pd.date_range(t0, tf, freq=chunksize):
+        start = ti - min(ti - t0, leeway)
+        stop = ti + chunksize + leeway
+        chunk = slice_time(data, start, stop)
+
+        if fn is not None:
+            chunk = fn(chunk)
+
+            if leeway > zero and fntrim:
+                try:
+                    chunk = slice_time(chunk, ti, ti + chunksize)
+                except Exception:
+                    warnings.warn(f"Could not trim chunk. Ignoring fntrim={fntrim}...")
+
+        yield chunk
+
+
+def slice_time(x, start, stop):
+    """ In pandas, slicing DateTimeIndex arrays is right-closed.
+    This function performs right-open slicing. """
+    x = x.loc[start : stop]
+    x = x[x.index != stop]
+    return x
