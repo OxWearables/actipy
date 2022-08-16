@@ -123,25 +123,33 @@ def detect_nonwear(data, patience='90m', stationary_indicator=None, drop=False):
     if stationary_indicator is None:
         stationary_indicator = get_stationary_indicator(data)
 
-    group = ((stationary_indicator != stationary_indicator.shift(1))
-             .cumsum()
-             .where(stationary_indicator))
-    stationary_len = (group.groupby(group, dropna=True)
-                           .apply(lambda g: g.index[-1] - g.index[0]))
-    nonwear_len = stationary_len[stationary_len > pd.Timedelta(patience)]
+    nonwear_indicator = (
+        stationary_indicator &
+        (stationary_indicator != stationary_indicator.shift(1))
+        .cumsum()
+        .pipe(
+            lambda x:
+            x.index.to_series().diff()
+            .groupby(x)
+            .transform('sum')
+            > pd.Timedelta(patience)
+        )
+    )
 
-    nonwear_time = nonwear_len.sum().total_seconds()
-    wear_time, _ = get_wear_time(data.index.to_series())
-    info['WearTime(days)'] = (wear_time - nonwear_time) / (60 * 60 * 24)  # update wear time
+    t = data.index.to_series()
+    nonwear_time = t.diff()[nonwear_indicator].sum().total_seconds()
+    wear_time, _ = get_wear_time(t)
+    wear_time = wear_time - nonwear_time  # update wear time
+    nonwear_episodes = nonwear_indicator.diff().sum() // 2
+
+    info['WearTime(days)'] = wear_time / (60 * 60 * 24)
     info['NonwearTime(days)'] = nonwear_time / (60 * 60 * 24)
-    info['NumNonwearEpisodes'] = len(nonwear_len)
+    info['NumNonwearEpisodes'] = nonwear_episodes
 
-    # Flag nonwear
-    nonwear_indicator = group.isin(nonwear_len.index)
     if drop:
         data = data[~nonwear_indicator]
     else:
-        data = data.mask(nonwear_indicator)
+        data.mask(nonwear_indicator, inplace=True)
 
     return data, info
 
