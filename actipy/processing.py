@@ -86,31 +86,46 @@ def lowpass(data, data_sample_rate, cutoff_rate=20):
 
     info = {}
 
-    orig_index = data.index
+    nyq = data_sample_rate / 2
+    if cutoff_rate >= nyq:
+        print(
+            f"Skipping lowpass filter: specified cutoff rate ({cutoff_rate}) "
+            f"must be less than the Nyquist frequency ({nyq})"
+        )
+        info['LowpassOK'] = 0
+        return data, info
+
     data, _ = resample(data, data_sample_rate, dropna=False)
 
-    # Butter filter to remove high freq noise.
-    # Default: 20Hz (most of human motion is under 20Hz)
-    # Skip this if the Nyquist freq is too low
-    if data_sample_rate / 2 > cutoff_rate:
+    def fn(data):
+        data = data.copy()
         xyz = data[['x', 'y', 'z']].to_numpy()
-        # Temporarily replace nans with 0s for butterfilt
         where_nan = np.isnan(xyz).any(1)
-        xyz[where_nan] = 0
+        xyz[where_nan] = 0  # replace NaNs with zeroes
         xyz = butterfilt(xyz, cutoff_rate, fs=data_sample_rate, axis=0)
-        # Now restore nans
-        xyz[where_nan] = np.nan
+        xyz[where_nan] = np.nan  # now restore NaNs
         data[['x', 'y', 'z']] = xyz
-        info['LowpassOK'] = 1
-        info['LowpassCutoff(Hz)'] = cutoff_rate
-    else:
-        print(f"Skipping lowpass filter: data sample rate {data_sample_rate} too low for cutoff rate {cutoff_rate}")
-        info['LowpassOK'] = 0
+        return data
 
-    data = data.reindex(orig_index,
-                        method='nearest',
-                        tolerance=pd.Timedelta('1s'),
-                        limit=1)
+    # Perform computation by chunks and memmap to reduce memory usage
+    data = M.concat([
+        M.copy(chunk.to_records())
+        for chunk in chunker(data,
+                             chunksize='4h',
+                             leeway='10m',
+                             fn=fn)
+    ])
+
+    data = npy2df(data)
+
+    # This will load everything to RAM!
+    # data = data.reindex(orig_index,
+    #                     method='nearest',
+    #                     tolerance=pd.Timedelta('1s'),
+    #                     limit=1)
+
+    info['LowpassOK'] = 1
+    info['LowpassCutoff(Hz)'] = cutoff_rate
 
     return data, info
 
@@ -436,12 +451,13 @@ def slice_time(x, start, stop):
     return x
 
 
-def npy2df(data):
+def npy2df(data, time_col='time'):
     """ Convert a numpy structured array to pandas dataframe. Also parse time
     and set as index. This function will avoid copies whenever possible. """
 
-    t = pd.to_datetime(data['time'], unit='ms')
-    columns = [c for c in ['x', 'y', 'z', 'T'] if c in data.dtype.names]
+    t = pd.to_datetime(data[time_col], unit='ms')
+    columns = [c for c in data.dtype.names if c != time_col]
     data = pd.DataFrame({c: data[c] for c in columns}, index=t, copy=False)
+    data.index.name = time_col
 
     return data
