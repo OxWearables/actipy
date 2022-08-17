@@ -411,3 +411,14 @@ def slice_time(x, start, stop):
     x = x.loc[start : stop]
     x = x[x.index != stop]
     return x
+
+
+def npy2df(data):
+    """ Convert a numpy structured array to pandas dataframe. Also parse time
+    and set as index. This function will avoid copies whenever possible. """
+
+    t = pd.to_datetime(data['time'], unit='ms')
+    columns = [c for c in ['x', 'y', 'z', 'T'] if c in data.dtype.names]
+    data = pd.DataFrame({c: data[c] for c in columns}, index=t, copy=False)
+
+    return data
