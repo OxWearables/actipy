@@ -63,7 +63,7 @@ def resample(data, sample_rate, dropna=False):
     data = npy2df(data)
 
     if dropna:
-        data = data.dropna()
+        data.dropna(inplace=True)
 
     info['NumTicksAfterResample'] = len(data)
 
