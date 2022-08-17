@@ -4,6 +4,8 @@ import scipy.signal as signal
 import statsmodels.api as sm
 import warnings
 
+import actipy.memmap_utils as M
+
 
 __all__ = ['lowpass', 'calibrate_gravity', 'detect_nonwear', 'resample', 'get_stationary_indicator']
 
@@ -321,24 +323,31 @@ def get_stationary_indicator(data, window='10s', stdtol=15 / 1000):
     """
 
     def fn(data):
-        return (
+        si = (
             (data[['x', 'y', 'z']]
              .rolling(window)
              .std()
              < stdtol)
             .all(axis=1)
+            .rename('stationary_indicator')
         )
+        si.index.name = 'time'
+        return si
 
-    stationary_indicator = pd.concat(
-        chunker(
-            data,
-            chunksize='4h',
-            leeway=window,
-            fn=fn
-        )
-    )
+    # Perform computation by chunks and memmap to reduce memory usage
+    si = M.concat([
+        M.copy(chunk.to_frame().to_records())
+        for chunk in chunker(data,
+                             chunksize='4h',
+                             leeway=window,
+                             fn=fn)
+    ])
 
-    return stationary_indicator
+    # Convert numpy structured array to pandas series.
+    # The underlying arrays are still memmapped.
+    si = pd.Series(si['stationary_indicator'], index=si['time'])
+
+    return si
 
 
 def get_wear_time(t, tol=0.1):
