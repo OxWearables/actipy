@@ -209,12 +209,20 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):  # noqa:
     if stationary_indicator is None:
         stationary_indicator = get_stationary_indicator(data)
 
-    # The paper uses 10sec averages instead of the raw ticks.
-    # This reduces computational cost. Also reduces influence of outliers.
-    stationary_data = (data[stationary_indicator]
-                       .resample('10s')
-                       .mean()
-                       .dropna())
+    # Use 10 sec averages instead of the raw ticks.
+    # This reduces computational cost, also influence of outliers.
+    def fn(data, stationary_indicator):
+        return (data[stationary_indicator]
+                .resample('10s')
+                .mean()
+                .dropna())
+
+    stationary_data = pd.concat(
+        chunker(data, stationary_indicator,
+                chunksize='4h',
+                leeway='0h',
+                fn=fn)
+    )
 
     hasT = 'T' in stationary_data
 
@@ -313,12 +321,12 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):  # noqa:
         return data, info
 
     else:
-        data = data.copy()
-        data[['x', 'y', 'z']] = (best_intercept
-                                 + best_slope * data[['x', 'y', 'z']].to_numpy())
-        if hasT:
-            data[['x', 'y', 'z']] = (data[['x', 'y', 'z']]
-                                     + best_slopeT * (data['T'].to_numpy()[:, None]))
+
+        for i, col in enumerate(['x', 'y', 'z']):
+            data[col] *= best_slope[i]
+            data[col] += best_intercept[i]
+            if hasT:
+                data[col] += best_slopeT[i] * data['T']
 
         info['CalibOK'] = 1
         info['CalibNumIters'] = it + 1
