@@ -35,12 +35,6 @@ def resample(data, sample_rate, dropna=False):
         print(f"Skipping resample: Rate {sample_rate} already achieved")
         return data, info
 
-    # Round-up sample_rate if non-integer
-    if isinstance(sample_rate, float) and not sample_rate.is_integer():
-        print(f"Found non-integer sample_rate {sample_rate},", end=" ")
-        sample_rate = np.ceil(sample_rate)
-        print(f"rounded-up to {sample_rate}.")
-
     info['ResampleRate'] = sample_rate
     info['NumTicksBeforeResample'] = len(data)
 
