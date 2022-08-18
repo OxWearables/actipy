@@ -3,6 +3,7 @@ import pandas as pd
 import scipy.signal as signal
 import statsmodels.api as sm
 import warnings
+from collections.abc import Iterator
 
 import actipy.memmap_utils as M
 
@@ -413,42 +414,60 @@ def butterfilt(x, cutoffs, fs, order=8, axis=0):
     return y
 
 
-def chunker(data, chunksize='4h', leeway='0h', fn=None, fntrim=True):
-    """ Return chunk generator for a given datetime-indexed DataFrame.
-    A `leeway` parameter can be used to obtain overlapping chunks (e.g. leeway='30m').
-    If a function `fn` is provided, it is applied to each chunk. The leeway is
-    trimmed after function application by default (set `fntrim=False` to skip).
+def chunker(*xs, chunksize='4h', leeway='0h', fn=None, fntrim=True):
+    """ Return chunk generator for a given datetime-indexed DataFrame. Multiple
+    dataframes can be provided, in which case chunking will be based on the
+    first datetime's index. A `leeway` parameter can be used to obtain
+    overlapping chunks (e.g. leeway='30m'). If a function `fn` is provided, it
+    is applied to each chunk. The leeway is trimmed after function application
+    by default (set `fntrim=False` to skip).
     """
 
     chunksize = pd.Timedelta(chunksize)
     leeway = pd.Timedelta(leeway)
     zero = pd.Timedelta(0)
 
-    t0, tf = data.index[0], data.index[-1]
+    t0, tf = xs[0].index[0], xs[0].index[-1]
 
     for ti in pd.date_range(t0, tf, freq=chunksize):
         start = ti - min(ti - t0, leeway)
         stop = ti + chunksize + leeway
-        chunk = slice_time(data, start, stop)
+        chunks = slice_time(*xs, start=start, stop=stop)
 
         if fn is not None:
-            chunk = fn(chunk)
+            chunks = tuple_(fn(*chunks))
 
             if leeway > zero and fntrim:
                 try:
-                    chunk = slice_time(chunk, ti, ti + chunksize)
+                    chunks = slice_time(*chunks, start=ti, stop=ti + chunksize)
                 except Exception:
                     warnings.warn(f"Could not trim chunk. Ignoring fntrim={fntrim}...")
 
-        yield chunk
+        if len(chunks) == 1:
+            chunks = chunks[0]
+
+        yield chunks
 
 
-def slice_time(x, start, stop):
+def slice_time(*xs, start, stop):
+    """ In pandas, slicing DateTimeIndex arrays is right-closed.
+    This function performs right-open slicing. """
+    return tuple(slice_time_(x, start, stop) for x in xs)
+
+
+def slice_time_(x, start, stop):
     """ In pandas, slicing DateTimeIndex arrays is right-closed.
     This function performs right-open slicing. """
     x = x.loc[start : stop]
     x = x[x.index != stop]
     return x
+
+
+def tuple_(x):
+    """ Cast to tuple type """
+    if isinstance(x, (tuple, list, set, Iterator)):
+        return tuple(x)
+    return (x, )
 
 
 def npy2df(data, time_col='time'):
