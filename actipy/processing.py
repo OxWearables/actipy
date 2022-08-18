@@ -28,6 +28,13 @@ def resample(data, sample_rate, dropna=False):
 
     info = {}
 
+    if np.isclose(
+        1 / sample_rate,
+        pd.Timedelta(pd.infer_freq(data.index)).total_seconds(),
+    ):
+        print(f"Skipping resample: Rate {sample_rate} already achieved")
+        return data, info
+
     # Round-up sample_rate if non-integer
     if isinstance(sample_rate, float) and not sample_rate.is_integer():
         print(f"Found non-integer sample_rate {sample_rate},", end=" ")
