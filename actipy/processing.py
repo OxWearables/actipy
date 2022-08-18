@@ -39,12 +39,12 @@ def resample(data, sample_rate, dropna=False):
 
     # Create a new index with intended sample_rate. Start and end times are
     # rounded to seconds so that the number of ticks (periods) is round
-    start = data.index[0].ceil('S')
-    end = data.index[-1].floor('S')
-    periods = int((end - start).total_seconds() * sample_rate + 1)  # +1 for the last tick
-    new_index = pd.date_range(start, end, periods=periods, name='time').to_series()
+    t0 = data.index[0].ceil('S')
+    tf = data.index[-1].floor('S')
+    periods = int((tf - t0).total_seconds() * sample_rate + 1)  # +1 for the last tick
+    t = pd.date_range(t0, tf, periods=periods, name='time').to_series()
 
-    def fn(t):
+    def fn(t, data):
         return data.reindex(
             t,
             method='nearest',
@@ -55,9 +55,9 @@ def resample(data, sample_rate, dropna=False):
     # Perform computation by chunks and memmap to reduce memory usage
     data = M.concat([
         M.copy(chunk.to_records())
-        for chunk in chunker(new_index,
+        for chunk in chunker(t, data,
                              chunksize='4h',
-                             leeway='0h',
+                             leeway='1m',
                              fn=fn)
     ])
 
