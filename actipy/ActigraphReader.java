@@ -31,7 +31,7 @@ public class ActigraphReader {
         itemNamesAndTypes.put("x", "Float");
         itemNamesAndTypes.put("y", "Float");
         itemNamesAndTypes.put("z", "Float");
-        // itemNamesAndTypes.put("T", "Double");
+        // itemNamesAndTypes.put("temperature", "Double");
         // itemNamesAndTypes.put("lux", "Integer");
         ITEM_NAMES_AND_TYPES = Collections.unmodifiableMap(itemNamesAndTypes);
     }
@@ -789,7 +789,7 @@ public class ActigraphReader {
         items.put("x", x);
         items.put("y", y);
         items.put("z", z);
-        // items.put("T", temperature);
+        // items.put("temperature", temperature);
         // items.put("lux", light);
         return items;
     }

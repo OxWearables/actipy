@@ -230,14 +230,14 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):  # noqa:
                 fn=fn)
     )
 
-    hasT = 'T' in stationary_data
+    hasT = 'temperature' in stationary_data
 
     xyz = stationary_data[['x', 'y', 'z']].to_numpy()
     # Remove any nonzero vectors as they cause nan issues
     nonzero = np.linalg.norm(xyz, axis=1) > 1e-8
     xyz = xyz[nonzero]
     if hasT:
-        T = stationary_data['T'].to_numpy()
+        T = stationary_data['temperature'].to_numpy()
         T = T[nonzero]
     del stationary_data
     del nonzero
@@ -332,7 +332,7 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):  # noqa:
             data[col] *= best_slope[i]
             data[col] += best_intercept[i]
             if hasT:
-                data[col] += best_slopeT[i] * data['T']
+                data[col] += best_slopeT[i] * data['temperature']
 
         info['CalibOK'] = 1
         info['CalibNumIters'] = it + 1
