@@ -28,11 +28,13 @@ def resample(data, sample_rate, dropna=False):
 
     info = {}
 
-    if np.isclose(
-        1 / sample_rate,
-        pd.Timedelta(pd.infer_freq(data.index)).total_seconds(),
-    ):
-        print(f"Skipping resample: Rate {sample_rate} already achieved")
+    # Check whether data already has the rate
+    if all(np.isclose(
+        data.index.to_series().diff().unique()[1:],  # first elem is 'NaT'
+        pd.Timedelta(1 / sample_rate, unit='s').to_numpy(),
+        rtol=.01, atol=0,
+    )):
+        print(f"Skipping resample: Sampling rate is already {sample_rate}")
         return data, info
 
     info['ResampleRate'] = sample_rate
@@ -50,7 +52,8 @@ def resample(data, sample_rate, dropna=False):
             t,
             method='nearest',
             tolerance=pd.Timedelta('1s'),
-            limit=1
+            limit=1,
+            copy=False  # note: only works if same index; still copies if memmapped
         )
 
     # Perform computation by chunks and memmap to reduce memory usage
