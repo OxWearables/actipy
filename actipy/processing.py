@@ -40,12 +40,15 @@ def resample(data, sample_rate, dropna=False):
     info['ResampleRate'] = sample_rate
     info['NumTicksBeforeResample'] = len(data)
 
-    # Create a new index with intended sample_rate. Start and end times are
-    # rounded to seconds so that the number of ticks (periods) is round
-    t0 = data.index[0].ceil('S')
-    tf = data.index[-1].floor('S')
-    periods = int((tf - t0).total_seconds() * sample_rate + 1)  # +1 for the last tick
-    t = pd.date_range(t0, tf, periods=periods, name='time').to_series()
+    # Create the new index with intended sample rate
+    t0, tf = data.index[0], data.index[-1]
+    nt = int(np.around((tf - t0).total_seconds() * sample_rate))  # integer number of ticks we need
+    tf = t0 + pd.Timedelta(nt / sample_rate, unit='s')  # adjust end tick
+    t = pd.date_range(
+        t0, tf,
+        periods=nt + 1,  # + 1 for the last tick
+        name='time'
+    ).to_series()
 
     def fn(t, data):
         return data.reindex(
