@@ -97,7 +97,8 @@ def lowpass(data, data_sample_rate, cutoff_rate=20):
         info['LowpassOK'] = 0
         return data, info
 
-    data, _ = resample(data, data_sample_rate, dropna=False)
+    data, info_resample = resample(data, data_sample_rate, dropna=False)
+    info.update(info_resample)
 
     def fn(data):
         data = data.copy()
