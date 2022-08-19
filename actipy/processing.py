@@ -37,9 +37,6 @@ def resample(data, sample_rate, dropna=False):
         print(f"Skipping resample: Sampling rate is already {sample_rate}")
         return data, info
 
-    info['ResampleRate'] = sample_rate
-    info['NumTicksBeforeResample'] = len(data)
-
     # Create the new index with intended sample rate
     t0, tf = data.index[0], data.index[-1]
     nt = int(np.around((tf - t0).total_seconds() * sample_rate))  # integer number of ticks we need
@@ -73,6 +70,7 @@ def resample(data, sample_rate, dropna=False):
     if dropna:
         data.dropna(inplace=True)
 
+    info['ResampleRate'] = sample_rate
     info['NumTicksAfterResample'] = len(data)
 
     return data, info
