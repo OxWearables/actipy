@@ -6,13 +6,10 @@
 Welcome to Actipy's documentation!
 ==================================
 
-**Actipy** is a Python library to process commonly used accelerometer files. In
-particular, it supports Axivity files (.cwa) which is the file format used in
-the popular `UK Biobank <https://www.ukbiobank.ac.uk/>`_ accelerometer dataset.
+**Actipy** is a Python package to process files from accelerometers commonly used in research: Axivity3, Actigraph, and GENEActiv.
 
-.. note::
-
-   This project is under active development.
+Axivity3 the activity tracker watch used in the large-scale
+`UK Biobank accelerometer study <https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0169649>`_.
 
 .. toctree::
    :maxdepth: 2
