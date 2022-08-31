@@ -40,7 +40,7 @@ def gentestref(input_file, outdir, tests):
 
     for testname, testparam in tests.items():
         print("Running:", testname)
-        _, info_test = actipy.process(data, info_read['SampleRate'], **testparam)
+        _, info_test = actipy.process(data.copy(), info_read['SampleRate'], **testparam)
         utils.save_dict2json(info_test, os.path.join(outdir, testname + '.json'))
 
 
