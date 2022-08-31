@@ -1,10 +1,9 @@
 {
+    "ResampleRate": 50,
+    "NumTicksAfterResample": 25262174,
     "LowpassOK": 1,
     "LowpassCutoff(Hz)": 20,
-    "WearTime(days)": 5.846723148148148,
+    "WearTime(days)": 5.847725231481482,
     "NonwearTime(days)": 0.0,
-    "NumNonwearEpisodes": 0,
-    "ResampleRate": 50,
-    "NumTicksBeforeResample": 51391800,
-    "NumTicksAfterResample": 25262101
+    "NumNonwearEpisodes": 0
 }

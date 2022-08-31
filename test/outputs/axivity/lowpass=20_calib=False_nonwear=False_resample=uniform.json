@@ -1,7 +1,6 @@
 {
-    "LowpassOK": 1,
-    "LowpassCutoff(Hz)": 20,
     "ResampleRate": 100.0,
-    "NumTicksBeforeResample": 51391800,
-    "NumTicksAfterResample": 50524201
+    "NumTicksAfterResample": 50524347,
+    "LowpassOK": 1,
+    "LowpassCutoff(Hz)": 20
 }
