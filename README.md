@@ -98,4 +98,4 @@ data, info_resample = P.resample(data, sample_rate)
 See the [documentation](https://actipy.readthedocs.io/en/latest/) for more.
 
 ## License
-See [license](LICENSE.md) before using this software.
+See [LICENSE.md](LICENSE.md).
