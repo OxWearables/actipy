@@ -193,7 +193,7 @@ def detect_nonwear(data, patience='90m', stationary_indicator=None, drop=False):
     return data, info
 
 
-def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):  # noqa: C901
+def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, stationary_indicator=None):  # noqa: C901
     """
     Gravity calibration method of van Hees et al. 2014 (https://pubmed.ncbi.nlm.nih.gov/25103964/)
 
@@ -202,6 +202,8 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):  # noqa:
     :type data: pandas.DataFrame.
     :param calib_cube: Calibration cube criteria. See van Hees et al. 2014 for details. Defaults to 0.3.
     :type calib_cube: float, optional.
+    :param calib_min_samples: Minimum number of stationary samples required to run calibration. Defaults to 50.
+    :type calib_min_samples: int, optional.
     :param stationary_indicator: A boolean pandas.Series indexed as `data`
         indicating stationary (low movement) periods. If None, it will be
         automatically inferred. Defaults to None.
@@ -241,6 +243,13 @@ def calibrate_gravity(data, calib_cube=0.3, stationary_indicator=None):  # noqa:
         T = T[nonzero]
     del stationary_data
     del nonzero
+
+    if len(xyz) < calib_min_samples:
+        info['CalibOK'] = 0
+        info['CalibErrorBefore(mg)'] = np.nan
+        info['CalibErrorAfter(mg)'] = np.nan
+        warnings.warn(f"Skipping calibration: Insufficient stationary samples")
+        return data, info
 
     intercept = np.array([0.0, 0.0, 0.0], dtype=xyz.dtype)
     slope = np.array([1.0, 1.0, 1.0], dtype=xyz.dtype)
