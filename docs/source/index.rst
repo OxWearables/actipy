@@ -3,10 +3,13 @@
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
-Welcome to Actipy's documentation!
+Actipy
 ==================================
 
-**Actipy** is a Python package to process files from accelerometers commonly used in research: Axivity3, Actigraph, and GENEActiv.
+A Python package to process accelerometer data.
+
+Axivity3 (`.cwa`), Actigraph (`.gt3x`), and GENEActiv (`.bin`) files are supported, 
+as well as custom CSV files.
 
 Axivity3 the activity tracker watch used in the large-scale
 `UK Biobank accelerometer study <https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0169649>`_.
