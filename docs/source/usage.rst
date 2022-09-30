@@ -1,17 +1,31 @@
 Usage
 =====
 
+Prerequisite 
+------------
+
+- Python 3.9 or greater
+    .. code-block:: console
+
+        $ python --version  # or python3 --version
+
+- Java 8 (1.8.0) or greater
+    .. code-block:: console
+
+        $ java -version
+
+
 Installation
 ------------
 
-Pip:
+With Pip:
 
 .. code-block:: console
 
     $ pip install actipy
 
 
-Conda:
+With Conda:
 
 .. code-block:: console
 

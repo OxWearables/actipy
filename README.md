@@ -7,17 +7,31 @@ Axivity3 is the activity tracker watch used in the large-scale
 
 ## Installation
 
-#### Pip
+## Getting started
+
+### Prerequisite
+
+- Python 3.9 or greater
+    ```console
+    $ python --version  # or python3 --version
+    ```
+
+- Java 8 (1.8.0) or greater
+    ```console
+    $ java -version
+    ```
+
+### Install
+
+With Pip:
 ```bash
 pip install actipy
 ```
 
-#### Conda
+With Conda:
 ```bash
 conda install -c oxwear actipy
 ```
-
-*Note:* Use either Pip or Conda, not both.
 
 ## Usage
 
