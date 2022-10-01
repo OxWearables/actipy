@@ -44,4 +44,20 @@ setuptools.setup(
         "statsmodels>=0.13",
         "Jpype1>=1.3",
     ],
+    extras_require={
+        "dev": [
+            "flake8",
+            "autopep8",
+            "ipython",
+            "ipdb",
+            "memory-profiler",
+            "twine",
+        ],
+        "docs": [
+            "sphinx>=4.2",
+            "sphinx_rtd_theme>=1.0",
+            "readthedocs-sphinx-search>=0.1",
+            "docutils<0.18",
+        ]
+    }
 )
