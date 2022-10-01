@@ -35,7 +35,7 @@ setuptools.setup(
         "Operating System :: MacOS :: MacOS X",
         "Operating System :: Unix",
     ],
-    packages=setuptools.find_packages(exclude=("test",)),
+    packages=setuptools.find_packages(exclude=("test", "tests")),
     include_package_data=True,
     install_requires=[
         "numpy==1.21.6",
