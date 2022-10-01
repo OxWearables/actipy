@@ -1,8 +1,22 @@
 import argparse
+import importlib
 import actipy
-from memory_profiler import profile
 
-@profile
+if importlib.util.find_spec("memory_profiler"):
+    from memory_profiler import profile
+else:
+    profile = None
+
+
+def optional_decorator(dec, cond=True):
+    def decorator(func):
+        if cond and dec is not None:
+            return dec(func)
+        return func
+    return decorator
+
+
+@optional_decorator(profile)
 def main():
 
     parser = argparse.ArgumentParser()
@@ -22,11 +36,12 @@ def main():
         verbose=True
     )
 
-    print(data)
+    print(data.head())
 
     # Pretty print info
     for k, v in info.items():
         print(f"{k:25s}: {v}")
+
 
 
 if __name__ == '__main__':
