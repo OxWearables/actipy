@@ -1,0 +1,46 @@
+name: cwa
+
+on:
+  - push
+  - pull_request
+
+jobs:
+  cwa:
+
+    runs-on: ${{matrix.os}}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.8", "3.9", "3.10"]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Setup java
+        uses: actions/setup-java@v1
+        with:
+          java-version: 1.8
+
+      - name: Compile java files
+        run: |
+          java -version
+          javac actipy/*.java
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install .
+
+      - name: Download test file
+        run: |
+          wget http://gas.ndph.ox.ac.uk/aidend/accModels/sample.cwa.gz --quiet
+
+      - name: Smoke test
+        run: |
+          python smoke_test.py sample.cwa.gz \
+            --lowpass_hz 20 --calibrate_gravity --detect_nonwear --resample_hz 50
