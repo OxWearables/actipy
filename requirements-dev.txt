@@ -1,9 +1,0 @@
-flake8
-autopep8
-ipython
-ipdb
-ipykernel
-matplotlib
-jupyter
-memory-profiler
-twine
