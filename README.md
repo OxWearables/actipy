@@ -14,7 +14,7 @@ Axivity3 is the activity tracker watch used in the large-scale
 
 ### Prerequisite
 
-- Python 3.7 or greater
+- Python 3.8 or greater
     ```console
     $ python --version  # or python3 --version
     ```

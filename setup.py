@@ -21,7 +21,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="actipy",
-    python_requires=">=3.7",
+    python_requires=">=3.8",
     version=get_string("__version__"),
     description="Python package to process wearable accelerometer data",
     long_description=long_description,
@@ -38,10 +38,10 @@ setuptools.setup(
     packages=setuptools.find_packages(exclude=("test", "tests")),
     include_package_data=True,
     install_requires=[
-        "numpy==1.21.6",
-        "scipy==1.7.3",
-        "pandas==1.3.5",
-        "statsmodels==0.13.2",
-        "Jpype1==1.3.0",
+        "numpy>=1.22",
+        "scipy>=1.7",
+        "pandas>=1.3",
+        "statsmodels>=0.13",
+        "Jpype1>=1.3",
     ],
 )
