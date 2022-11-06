@@ -9,4 +9,5 @@
 # conda install openjdk
 javac --version &&  # java version
 javac --release 8 actipy/*.java &&  # compile java files (using release 8)
-pip install -e .[dev,docs] &&  # install in edit mode
+pip install -e .[dev,docs] # install in edit mode
+
