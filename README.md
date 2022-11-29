@@ -2,7 +2,7 @@
 
 A Python package to process accelerometer data.
 
-Axivity3 (`.cwa`), Actigraph (`.gt3x`), and GENEActiv (`.bin`) files are supported, 
+Axivity3 (`.cwa`), Actigraph (`.gt3x`), and GENEActiv (`.bin`) files are supported,
 as well as custom CSV files.
 
 Axivity3 is the activity tracker watch used in the large-scale
@@ -26,15 +26,14 @@ Axivity3 is the activity tracker watch used in the large-scale
 
 ### Install
 
-With Pip:
 ```bash
-pip install actipy
+$ pip install actipy
 ```
 
-With Conda:
+<!-- With Conda:
 ```bash
-conda install -c oxwear actipy
-```
+$ conda install -c oxwear actipy
+``` -->
 
 ## Usage
 
