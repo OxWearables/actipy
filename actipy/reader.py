@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import jpype
 
-from actipy import processing as P
+from actipy import processing
 
 
 __all__ = ['read_device', 'process']
@@ -98,7 +98,7 @@ def process(data, sample_rate,
 
     if lowpass_hz not in (None, False):
         timer.start("Lowpass filter...")
-        data, info_lowpass = P.lowpass(data, sample_rate, lowpass_hz)
+        data, info_lowpass = processing.lowpass(data, sample_rate, lowpass_hz)
         info.update(info_lowpass)
         timer.stop()
 
@@ -107,27 +107,27 @@ def process(data, sample_rate,
     stationary_indicator = None
     if calibrate_gravity or detect_nonwear:
         timer.start("Getting stationary points...")
-        stationary_indicator = P.get_stationary_indicator(data)
+        stationary_indicator = processing.get_stationary_indicator(data)
         timer.stop()
 
     if calibrate_gravity:
         timer.start("Gravity calibration...")
-        data, info_calib = P.calibrate_gravity(data, stationary_indicator=stationary_indicator)
+        data, info_calib = processing.calibrate_gravity(data, stationary_indicator=stationary_indicator)
         info.update(info_calib)
         timer.stop()
 
     if detect_nonwear:
         timer.start("Nonwear detection...")
-        data, info_nonwear = P.detect_nonwear(data, stationary_indicator=stationary_indicator)
+        data, info_nonwear = processing.detect_nonwear(data, stationary_indicator=stationary_indicator)
         info.update(info_nonwear)
         timer.stop()
 
     if resample_hz not in (None, False):
         timer.start("Resampling...")
         if resample_hz in ('uniform', True):
-            data, info_resample = P.resample(data, sample_rate)
+            data, info_resample = processing.resample(data, sample_rate)
         else:
-            data, info_resample = P.resample(data, resample_hz)
+            data, info_resample = processing.resample(data, resample_hz)
         info.update(info_resample)
         timer.stop()
 
@@ -170,7 +170,7 @@ def _read_device(input_file, verbose=True):
 
         timer.start("Converting to dataframe...")
         # Load parsed data to a pandas dataframe
-        data = P.npy2df(np.load(tmpout, mmap_mode='r+'))
+        data = npy2df(np.load(tmpout, mmap_mode='r'))
         # Fix if time non-increasing (rarely occurs)
         data, nonincr_time_errs = fix_nonincr_time(data)
         # Update read errors. Non-increasing time errors scaled by sample rate
@@ -182,7 +182,7 @@ def _read_device(input_file, verbose=True):
         strftime = "%Y-%m-%d %H:%M:%S"
         info['StartTime'], info['EndTime'] = t[0].strftime(strftime), t[-1].strftime(strftime)
         info['NumTicks'] = len(data)
-        wear_time, num_interrupts = P.get_wear_time(t)
+        wear_time, num_interrupts = processing.get_wear_time(t)
         info['WearTime(days)'] = wear_time / (60 * 60 * 24)
         info['NumInterrupts'] = num_interrupts
 
@@ -254,6 +254,17 @@ def decompr(input_file, target_dir):
             f.extractall(target_dir)
 
     return newfile
+
+
+def npy2df(data):
+    """ Convert numpy array to pandas dataframe.
+    Also parse time and set it as index. """
+
+    data = pd.DataFrame({col: data[col] for col in data.dtype.names})
+    data['time'] = pd.to_datetime(data['time'], unit='ms')
+    data = data.set_index('time')
+
+    return data
 
 
 def get_device_info(input_file):

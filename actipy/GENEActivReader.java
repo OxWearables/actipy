@@ -22,7 +22,7 @@ public class GENEActivReader {
         itemNamesAndTypes.put("x", "Float");
         itemNamesAndTypes.put("y", "Float");
         itemNamesAndTypes.put("z", "Float");
-        itemNamesAndTypes.put("temperature", "Float");
+        itemNamesAndTypes.put("T", "Float");
         ITEM_NAMES_AND_TYPES = Collections.unmodifiableMap(itemNamesAndTypes);
     }
 
@@ -249,7 +249,7 @@ public class GENEActivReader {
         items.put("x", x);
         items.put("y", y);
         items.put("z", z);
-        items.put("temperature", temperature);
+        items.put("T", temperature);
         return items;
     }
 

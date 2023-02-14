@@ -21,10 +21,10 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument('datafile')
-    parser.add_argument('--lowpass_hz', default=None, type=float)
+    parser.add_argument('--lowpass_hz', default=None, type=int)
     parser.add_argument('--calibrate_gravity', action='store_true')
     parser.add_argument('--detect_nonwear', action='store_true')
-    parser.add_argument('--resample_hz', default=None, type=float)
+    parser.add_argument('--resample_hz', default=None, type=int)
     args = parser.parse_args()
 
     data, info = actipy.read_device(

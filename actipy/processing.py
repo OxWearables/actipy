@@ -3,9 +3,6 @@ import pandas as pd
 import scipy.signal as signal
 import statsmodels.api as sm
 import warnings
-from collections.abc import Iterator
-
-import actipy.memmap_utils as M
 
 
 __all__ = ['lowpass', 'calibrate_gravity', 'detect_nonwear', 'resample', 'get_stationary_indicator']
@@ -28,49 +25,29 @@ def resample(data, sample_rate, dropna=False):
 
     info = {}
 
-    # Check whether data already has the rate
-    if all(np.isclose(
-        data.index.to_series().diff().unique()[1:],  # first elem is 'NaT'
-        pd.Timedelta(1 / sample_rate, unit='s').to_numpy(),
-        rtol=.01, atol=0,
-    )):
-        print(f"Skipping resample: Sampling rate is already {sample_rate}")
-        return data, info
-
-    # Create the new index with intended sample rate
-    t0, tf = data.index[0], data.index[-1]
-    nt = int(np.around((tf - t0).total_seconds() * sample_rate))  # integer number of ticks we need
-    tf = t0 + pd.Timedelta(nt / sample_rate, unit='s')  # adjust end tick
-    t = pd.date_range(
-        t0, tf,
-        periods=nt + 1,  # + 1 for the last tick
-        name='time'
-    ).to_series()
-
-    def fn(t, data):
-        return data.reindex(
-            t,
-            method='nearest',
-            tolerance=pd.Timedelta('1s'),
-            limit=1,
-            copy=False  # note: only works if same index; still copies if memmapped
-        )
-
-    # Perform computation by chunks and memmap to reduce memory usage
-    data = M.concat([
-        M.copy(chunk.to_records())
-        for chunk in chunker(t, data,
-                             chunksize='4h',
-                             leeway='1m',
-                             fn=fn)
-    ])
-
-    data = npy2df(data)
-
-    if dropna:
-        data.dropna(inplace=True)
+    # Round-up sample_rate if non-integer
+    if isinstance(sample_rate, float) and not sample_rate.is_integer():
+        print(f"Found non-integer sample_rate {sample_rate},", end=" ")
+        sample_rate = np.ceil(sample_rate)
+        print(f"rounded-up to {sample_rate}.")
 
     info['ResampleRate'] = sample_rate
+    info['NumTicksBeforeResample'] = len(data)
+
+    # Create a new index with intended sample_rate. Start and end times are
+    # rounded to seconds so that the number of ticks (periods) is round
+    start = data.index[0].ceil('S')
+    end = data.index[-1].floor('S')
+    periods = int((end - start).total_seconds() * sample_rate + 1)  # +1 for the last tick
+    new_index = pd.date_range(start, end, periods=periods, name='time')
+    data = data.reindex(new_index,
+                        method='nearest',
+                        tolerance=pd.Timedelta('1s'),
+                        limit=1)
+
+    if dropna:
+        data = data.dropna()
+
     info['NumTicksAfterResample'] = len(data)
 
     return data, info
@@ -92,47 +69,31 @@ def lowpass(data, data_sample_rate, cutoff_rate=20):
 
     info = {}
 
-    nyq = data_sample_rate / 2
-    if cutoff_rate >= nyq:
-        print(
-            f"Skipping lowpass filter: specified cutoff rate ({cutoff_rate}) "
-            f"must be less than the Nyquist frequency ({nyq})"
-        )
-        info['LowpassOK'] = 0
-        return data, info
+    orig_index = data.index
+    data, _ = resample(data, data_sample_rate, dropna=False)
 
-    data, info_resample = resample(data, data_sample_rate, dropna=False)
-    info.update(info_resample)
-
-    def fn(data):
-        data = data.copy()
+    # Butter filter to remove high freq noise.
+    # Default: 20Hz (most of human motion is under 20Hz)
+    # Skip this if the Nyquist freq is too low
+    if data_sample_rate / 2 > cutoff_rate:
         xyz = data[['x', 'y', 'z']].to_numpy()
+        # Temporarily replace nans with 0s for butterfilt
         where_nan = np.isnan(xyz).any(1)
-        xyz[where_nan] = 0  # replace NaNs with zeroes
+        xyz[where_nan] = 0
         xyz = butterfilt(xyz, cutoff_rate, fs=data_sample_rate, axis=0)
-        xyz[where_nan] = np.nan  # now restore NaNs
+        # Now restore nans
+        xyz[where_nan] = np.nan
         data[['x', 'y', 'z']] = xyz
-        return data
+        info['LowpassOK'] = 1
+        info['LowpassCutoff(Hz)'] = cutoff_rate
+    else:
+        print(f"Skipping lowpass filter: data sample rate {data_sample_rate} too low for cutoff rate {cutoff_rate}")
+        info['LowpassOK'] = 0
 
-    # Perform computation by chunks and memmap to reduce memory usage
-    data = M.concat([
-        M.copy(chunk.to_records())
-        for chunk in chunker(data,
-                             chunksize='4h',
-                             leeway='10m',
-                             fn=fn)
-    ])
-
-    data = npy2df(data)
-
-    # This will load everything to RAM!
-    # data = data.reindex(orig_index,
-    #                     method='nearest',
-    #                     tolerance=pd.Timedelta('1s'),
-    #                     limit=1)
-
-    info['LowpassOK'] = 1
-    info['LowpassCutoff(Hz)'] = cutoff_rate
+    data = data.reindex(orig_index,
+                        method='nearest',
+                        tolerance=pd.Timedelta('1s'),
+                        limit=1)
 
     return data, info
 
@@ -162,33 +123,25 @@ def detect_nonwear(data, patience='90m', stationary_indicator=None, drop=False):
     if stationary_indicator is None:
         stationary_indicator = get_stationary_indicator(data)
 
-    nonwear_indicator = (
-        stationary_indicator &
-        (stationary_indicator != stationary_indicator.shift(1))
-        .cumsum()
-        .pipe(
-            lambda x:
-            x.index.to_series().diff()
-            .groupby(x)
-            .transform('sum')
-            > pd.Timedelta(patience)
-        )
-    )
+    group = ((stationary_indicator != stationary_indicator.shift(1))
+             .cumsum()
+             .where(stationary_indicator))
+    stationary_len = (group.groupby(group, dropna=True)
+                           .apply(lambda g: g.index[-1] - g.index[0]))
+    nonwear_len = stationary_len[stationary_len > pd.Timedelta(patience)]
 
-    t = data.index.to_series()
-    nonwear_time = t.diff()[nonwear_indicator].sum().total_seconds()
-    wear_time, _ = get_wear_time(t)
-    wear_time = wear_time - nonwear_time  # update wear time
-    nonwear_episodes = nonwear_indicator.diff().sum() // 2
-
-    info['WearTime(days)'] = wear_time / (60 * 60 * 24)
+    nonwear_time = nonwear_len.sum().total_seconds()
+    wear_time, _ = get_wear_time(data.index.to_series())
+    info['WearTime(days)'] = (wear_time - nonwear_time) / (60 * 60 * 24)  # update wear time
     info['NonwearTime(days)'] = nonwear_time / (60 * 60 * 24)
-    info['NumNonwearEpisodes'] = nonwear_episodes
+    info['NumNonwearEpisodes'] = len(nonwear_len)
 
+    # Flag nonwear
+    nonwear_indicator = group.isin(nonwear_len.index)
     if drop:
         data = data[~nonwear_indicator]
     else:
-        data.mask(nonwear_indicator, inplace=True)
+        data = data.mask(nonwear_indicator)
 
     return data, info
 
@@ -217,29 +170,21 @@ def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, stationary_ind
     if stationary_indicator is None:
         stationary_indicator = get_stationary_indicator(data)
 
-    # Use 10 sec averages instead of the raw ticks.
-    # This reduces computational cost, also influence of outliers.
-    def fn(data, stationary_indicator):
-        return (data[stationary_indicator]
-                .resample('10s')
-                .mean()
-                .dropna())
+    # The paper uses 10sec averages instead of the raw ticks.
+    # This reduces computational cost. Also reduces influence of outliers.
+    stationary_data = (data[stationary_indicator]
+                       .resample('10s')
+                       .mean()
+                       .dropna())
 
-    stationary_data = pd.concat(
-        chunker(data, stationary_indicator,
-                chunksize='4h',
-                leeway='0h',
-                fn=fn)
-    )
-
-    hasT = 'temperature' in stationary_data
+    hasT = 'T' in stationary_data
 
     xyz = stationary_data[['x', 'y', 'z']].to_numpy()
     # Remove any nonzero vectors as they cause nan issues
     nonzero = np.linalg.norm(xyz, axis=1) > 1e-8
     xyz = xyz[nonzero]
     if hasT:
-        T = stationary_data['temperature'].to_numpy()
+        T = stationary_data['T'].to_numpy()
         T = T[nonzero]
     del stationary_data
     del nonzero
@@ -336,12 +281,12 @@ def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, stationary_ind
         return data, info
 
     else:
-
-        for i, col in enumerate(['x', 'y', 'z']):
-            data[col] *= best_slope[i]
-            data[col] += best_intercept[i]
-            if hasT:
-                data[col] += best_slopeT[i] * data['temperature']
+        data = data.copy()
+        data[['x', 'y', 'z']] = (best_intercept
+                                 + best_slope * data[['x', 'y', 'z']].to_numpy())
+        if hasT:
+            data[['x', 'y', 'z']] = (data[['x', 'y', 'z']]
+                                     + best_slopeT * (data['T'].to_numpy()[:, None]))
 
         info['CalibOK'] = 1
         info['CalibNumIters'] = it + 1
@@ -377,31 +322,24 @@ def get_stationary_indicator(data, window='10s', stdtol=15 / 1000):
     """
 
     def fn(data):
-        si = (
+        return (
             (data[['x', 'y', 'z']]
              .rolling(window)
              .std()
              < stdtol)
             .all(axis=1)
-            .rename('stationary_indicator')
         )
-        si.index.name = 'time'
-        return si
 
-    # Perform computation by chunks and memmap to reduce memory usage
-    si = M.concat([
-        M.copy(chunk.to_frame().to_records())
-        for chunk in chunker(data,
-                             chunksize='4h',
-                             leeway=window,
-                             fn=fn)
-    ])
+    stationary_indicator = pd.concat(
+        chunker(
+            data,
+            chunksize='4h',
+            leeway=window,
+            fn=fn
+        )
+    )
 
-    # Convert numpy structured array to pandas series.
-    # The underlying arrays are still memmapped.
-    si = pd.Series(si['stationary_indicator'], index=si['time'])
-
-    return si
+    return stationary_indicator
 
 
 def get_wear_time(t, tol=0.1):
@@ -437,69 +375,39 @@ def butterfilt(x, cutoffs, fs, order=8, axis=0):
     return y
 
 
-def chunker(*xs, chunksize='4h', leeway='0h', fn=None, fntrim=True):
-    """ Return chunk generator for a given datetime-indexed DataFrame. Multiple
-    dataframes can be provided, in which case chunking will be based on the
-    first datetime's index. A `leeway` parameter can be used to obtain
-    overlapping chunks (e.g. leeway='30m'). If a function `fn` is provided, it
-    is applied to each chunk. The leeway is trimmed after function application
-    by default (set `fntrim=False` to skip).
+def chunker(data, chunksize='4h', leeway='0h', fn=None, fntrim=True):
+    """ Return chunk generator for a given datetime-indexed DataFrame.
+    A `leeway` parameter can be used to obtain overlapping chunks (e.g. leeway='30m').
+    If a function `fn` is provided, it is applied to each chunk. The leeway is
+    trimmed after function application by default (set `fntrim=False` to skip).
     """
 
     chunksize = pd.Timedelta(chunksize)
     leeway = pd.Timedelta(leeway)
     zero = pd.Timedelta(0)
 
-    t0, tf = xs[0].index[0], xs[0].index[-1]
+    t0, tf = data.index[0], data.index[-1]
 
     for ti in pd.date_range(t0, tf, freq=chunksize):
         start = ti - min(ti - t0, leeway)
         stop = ti + chunksize + leeway
-        chunks = slice_time(*xs, start=start, stop=stop)
+        chunk = slice_time(data, start, stop)
 
         if fn is not None:
-            chunks = tuple_(fn(*chunks))
+            chunk = fn(chunk)
 
             if leeway > zero and fntrim:
                 try:
-                    chunks = slice_time(*chunks, start=ti, stop=ti + chunksize)
+                    chunk = slice_time(chunk, ti, ti + chunksize)
                 except Exception:
                     warnings.warn(f"Could not trim chunk. Ignoring fntrim={fntrim}...")
 
-        if len(chunks) == 1:
-            chunks = chunks[0]
-
-        yield chunks
+        yield chunk
 
 
-def slice_time(*xs, start, stop):
-    """ In pandas, slicing DateTimeIndex arrays is right-closed.
-    This function performs right-open slicing. """
-    return tuple(slice_time_(x, start, stop) for x in xs)
-
-
-def slice_time_(x, start, stop):
+def slice_time(x, start, stop):
     """ In pandas, slicing DateTimeIndex arrays is right-closed.
     This function performs right-open slicing. """
     x = x.loc[start : stop]
     x = x[x.index != stop]
     return x
-
-
-def tuple_(x):
-    """ Cast to tuple type """
-    if isinstance(x, (tuple, list, set, Iterator)):
-        return tuple(x)
-    return (x, )
-
-
-def npy2df(data, time_col='time'):
-    """ Convert a numpy structured array to pandas dataframe. Also parse time
-    and set as index. This function will avoid copies whenever possible. """
-
-    t = pd.to_datetime(data[time_col], unit='ms')
-    columns = [c for c in data.dtype.names if c != time_col]
-    data = pd.DataFrame({c: data[c] for c in columns}, index=t, copy=False)
-    data.index.name = time_col
-
-    return data

@@ -27,7 +27,7 @@ public class AxivityReader {
         itemNamesAndTypes.put("x", "Float");
         itemNamesAndTypes.put("y", "Float");
         itemNamesAndTypes.put("z", "Float");
-        itemNamesAndTypes.put("temperature", "Float");
+        itemNamesAndTypes.put("T", "Float");
         // itemNamesAndTypes.put("lux", "Integer");  // unused for now
         ITEM_NAMES_AND_TYPES = Collections.unmodifiableMap(itemNamesAndTypes);
     }
@@ -299,7 +299,7 @@ public class AxivityReader {
         items.put("x", x);
         items.put("y", y);
         items.put("z", z);
-        items.put("temperature", temperature);
+        items.put("T", temperature);
         // items.put("lux", light);
         return items;
     }
