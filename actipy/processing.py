@@ -33,7 +33,6 @@ def resample(data, sample_rate, dropna=False):
         return data, info
 
     info['ResampleRate'] = sample_rate
-    info['NumTicksBeforeResample'] = len(data)
 
     t0, tf = data.index[0], data.index[-1]
     nt = int(np.around((tf - t0).total_seconds() * sample_rate))  # integer number of ticks we need
