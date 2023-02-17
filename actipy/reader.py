@@ -170,7 +170,7 @@ def _read_device(input_file, verbose=True):
 
         timer.start("Converting to dataframe...")
         # Load parsed data to a pandas dataframe
-        data = P.npy2df(np.load(tmpout, mmap_mode='r+'))
+        data = P.npy2df(np.load(tmpout, mmap_mode='r+')).copy()  # Note: needs copy or cleanup below will fail
         # Fix if time non-increasing (rarely occurs)
         data, nonincr_time_errs = fix_nonincr_time(data)
         # Update read errors. Non-increasing time errors scaled by sample rate
