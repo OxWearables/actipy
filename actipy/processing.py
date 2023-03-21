@@ -122,7 +122,7 @@ def detect_nonwear(data, patience='90m', stationary_indicator=None, drop=False):
     group = ((stationary_indicator != stationary_indicator.shift(1))
              .cumsum()
              .where(stationary_indicator))
-    stationary_len = (group.groupby(group, dropna=True)
+    stationary_len = (group.groupby(group, dropna=True, group_keys=False)
                            .apply(lambda g: g.index[-1] - g.index[0]))
     if len(stationary_len) > 0:
         nonwear_len = stationary_len[stationary_len > pd.Timedelta(patience)]
