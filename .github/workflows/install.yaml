@@ -1,8 +1,10 @@
 name: install
 
 on:
-  - push
-  - pull_request
+  push:
+    branches:
+      - '**'
+  pull_request:
 
 jobs:
   install:
