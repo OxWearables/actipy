@@ -1,4 +1,4 @@
 #!/bin/bash
 
-rm -r actipy.egg-info build dist
+rm -r build dist src/actipy.egg-info
 rm -r conda-recipe
