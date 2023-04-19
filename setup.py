@@ -1,6 +1,10 @@
+import sys
+import os.path
+# https://github.com/python-versioneer/python-versioneer/issues/193
+sys.path.insert(0, os.path.dirname(__file__))
+
 import setuptools
 import codecs
-import os.path
 
 import versioneer
 
