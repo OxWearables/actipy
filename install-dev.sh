@@ -8,6 +8,5 @@
 # In conda, you can get a JDK version that supports --release flag:
 # conda install openjdk
 javac --version &&  # java version
-javac --release 8 actipy/*.java &&  # compile java files (using release 8)
+javac --release 8 src/actipy/*.java &&  # compile java files (using release 8)
 pip install -e .[dev,docs] # install in edit mode
-
