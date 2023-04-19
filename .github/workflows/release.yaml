@@ -24,6 +24,16 @@ jobs:
           # https://github.com/actions/checkout/issues/338
           fetch-depth: 0
 
+      - name: Setup Java
+        uses: actions/setup-java@v1
+        with:
+          java-version: 1.8
+
+      - name: Compile Java files
+        run: |
+          java -version
+          javac src/actipy/*.java
+
       - name: Set up Python
         uses: actions/setup-python@v3
         with:
