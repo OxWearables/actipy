@@ -65,6 +65,7 @@ setuptools.setup(
             "ipdb",
             "memory-profiler",
             "twine",
+            "tomli",
         ],
         "docs": [
             "sphinx>=4.2",
