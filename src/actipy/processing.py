@@ -417,7 +417,7 @@ def npy2df(data):
     and set as index. This function will avoid copies whenever possible. """
 
     t = pd.to_datetime(data['time'], unit='ms')
-    columns = [c for c in ['x', 'y', 'z', 'T'] if c in data.dtype.names]
+    columns = [c for c in ['x', 'y', 'z', 'temperature'] if c in data.dtype.names]
     data = pd.DataFrame({c: data[c] for c in columns}, index=t, copy=False)
 
     return data
