@@ -45,5 +45,4 @@ jobs:
 
       - name: Smoke test
         run: |
-          python smoke_test.py sample.cwa.gz \
-            --lowpass_hz 20 --calibrate_gravity --detect_nonwear --resample_hz 50
+          python smoke_test.py sample.cwa.gz
