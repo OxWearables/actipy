@@ -2,7 +2,7 @@ import os
 import time
 import struct
 import shutil
-import tempfile
+import uuid
 import atexit
 import zipfile
 import gzip
@@ -144,8 +144,10 @@ def _read_device(input_file, verbose=True):
 
         timer = Timer(verbose)
 
-        # Temporary diretory to store internal runtime files
-        tmpdir = tempfile.mkdtemp()
+        # Create temporary directory to store internal runtime files
+        tmpdir = f'__actipy__/{uuid.uuid4().hex}'
+        os.makedirs(tmpdir, exist_ok=False)
+
         # Temporary file to store parsed device data
         tmpout = os.path.join(tmpdir, "tmpout.npy")
 
