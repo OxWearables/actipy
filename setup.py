@@ -66,6 +66,7 @@ setuptools.setup(
             "memory-profiler",
             "twine",
             "tomli",
+            "pytest",
         ],
         "docs": [
             "sphinx>=4.2",
