@@ -10,3 +10,6 @@
 javac --version &&  # java version
 javac --release 8 src/actipy/*.java &&  # compile java files (using release 8)
 pip install -e .[dev,docs] # install in edit mode
+
+# Download tiny sample data used for unit tests
+wget -P tests/data/ https://wearables-files.ndph.ox.ac.uk/files/data/samples/ax3/tiny-sample.cwa.gz
