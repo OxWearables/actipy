@@ -370,6 +370,7 @@ def butterfilt(x, cutoffs, fs, order=8, axis=0):
         Wn = cutoffs / nyq
     sos = signal.butter(order, Wn, btype=btype, analog=False, output='sos')
     y = signal.sosfiltfilt(sos, x, axis=axis)
+    y = y.astype(x.dtype, copy=False)
 
     return y
 
