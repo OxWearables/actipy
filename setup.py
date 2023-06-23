@@ -63,7 +63,6 @@ setuptools.setup(
             "autopep8",
             "ipython",
             "ipdb",
-            "memory-profiler",
             "twine",
             "tomli",
             "pytest",

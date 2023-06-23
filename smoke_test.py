@@ -1,22 +1,6 @@
 import argparse
-import importlib
 import actipy
 
-if importlib.util.find_spec("memory_profiler"):
-    from memory_profiler import profile
-else:
-    profile = None
-
-
-def optional_decorator(dec, cond=True):
-    def decorator(func):
-        if cond and dec is not None:
-            return dec(func)
-        return func
-    return decorator
-
-
-@optional_decorator(profile)
 def main():
 
     parser = argparse.ArgumentParser()
