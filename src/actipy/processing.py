@@ -419,7 +419,7 @@ def npy2df(data):
 
     t = pd.to_datetime(data['time'], unit='ms')
     t.name = 'time'
-    columns = [c for c in ['x', 'y', 'z', 'temperature'] if c in data.dtype.names]
+    columns = [c for c in data.dtype.names if c != 'time']
     data = pd.DataFrame({c: data[c] for c in columns}, index=t, copy=False)
 
     return data
