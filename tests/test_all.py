@@ -70,7 +70,8 @@ def test_resample():
     """ Test resampling. """
 
     data, info = read_device()
-    data, info_resample = P.resample(data, sample_rate=info['SampleRate'])
+    # Use a small chunk size to test chunking
+    data, info_resample = P.resample(data, sample_rate=info['SampleRate'], chunksize=10_000)
 
     info_resample_ref = {
         'ResampleRate': 100.0, 
