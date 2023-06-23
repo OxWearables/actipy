@@ -1,14 +1,17 @@
+import os
+import tempfile
 import numpy as np
 import pandas as pd
 import scipy.signal as signal
 import statsmodels.api as sm
 import warnings
+import uuid
 
 
 __all__ = ['lowpass', 'calibrate_gravity', 'detect_nonwear', 'resample', 'get_stationary_indicator']
 
 
-def resample(data, sample_rate, dropna=False):
+def resample(data, sample_rate, dropna=False, chunksize=1_000_000):
     """
     Nearest neighbor resampling. For downsampling, it is recommended to first
     apply an antialiasing filter.
@@ -19,6 +22,8 @@ def resample(data, sample_rate, dropna=False):
     :type sample_rate: int or float
     :param dropna: Whether to drop NaN values after resampling. Defaults to False.
     :type dropna: bool, optional
+    :param chunksize: Chunk size. Defaults to 1_000_000.
+    :type chunksize: int, optional
     :return: Processed data and processing info.
     :rtype: (pandas.DataFrame, dict)
     """
@@ -35,13 +40,49 @@ def resample(data, sample_rate, dropna=False):
     info['ResampleRate'] = sample_rate
 
     t0, tf = data.index[0], data.index[-1]
-    nt = int(np.around((tf - t0).total_seconds() * sample_rate))  # integer number of ticks we need
-    tf = t0 + pd.Timedelta(nt / sample_rate, unit='s')  # adjust end tick
-    t = pd.date_range(t0, tf, periods=nt + 1, name='time')
+    nt = int(np.around((tf - t0).total_seconds() * sample_rate)) + 1  # integer number of ticks we need
 
-    data = data.reindex(t, method='nearest', tolerance=pd.Timedelta('1s'), limit=1)
+    # # In-memory version
+    # tf = t0 + pd.Timedelta((nt - 1) / sample_rate, unit='s')  # adjust tf
+    # t = pd.date_range(t0, tf, periods=nt, name=data.index.name)
+    # data = data.reindex(t, method='nearest', tolerance=pd.Timedelta('1s'), limit=1)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # We use TemporaryDirectory() + filename instead of NamedTemporaryFile()
+        # because we don't want to open the file just yet:
+        # https://stackoverflow.com/questions/26541416/generate-temporary-file-names-without-creating-actual-file-in-python
+        # and Windows doesn't allow opening a file twice:
+        # https://docs.python.org/3.9/library/tempfile.html#tempfile.NamedTemporaryFile
+        mmap_fname = os.path.join(tmpdir, 'data.mmap')
+
+        data_mmap = mmap_like(data, mmap_fname, shape=(nt,))
+
+        for i in range(0, nt, chunksize):
+
+            # If last chunk, adjust chunksize
+            if i + chunksize > nt:
+                chunksize = nt - i
+
+            # Use pd.Timedelta(n/r) instead of n * pd.Timedelta(1/r): it's not the same due to numerical precision
+            t = pd.date_range(
+                t0 + pd.Timedelta(i / sample_rate, unit='s'),
+                t0 + pd.Timedelta((i + chunksize - 1) / sample_rate, unit='s'),
+                periods=chunksize,
+                name=data.index.name,
+            )
+            chunk = data.reindex(t, method='nearest', tolerance=pd.Timedelta('1s'), limit=1)
+            copy2mmap(chunk, data_mmap[i:i + chunksize])
+
+        del data
+
+        # We need to copy so that the mmap file can be trully deleted: 
+        # https://stackoverflow.com/questions/24178460/in-python-is-it-possible-to-overload-numpys-memmap-to-delete-itself-when-the-m
+        data = mmap2df(data_mmap, copy=True)
+
+        del data_mmap
 
     if dropna:
+        # TODO: This may force a copy of the data
         data = data.dropna()
 
     info['NumTicksAfterResample'] = len(data)
@@ -429,5 +470,40 @@ def npy2df(data):
     t.name = 'time'
     columns = [c for c in data.dtype.names if c != 'time']
     data = pd.DataFrame({c: data[c] for c in columns}, index=t, copy=False)
+    return data
 
+
+def mmap_like(data, filename, mode='w+', shape=None):
+    dtype = np.dtype([
+        (data.index.name, data.index.dtype), 
+        *[(c, data[c].dtype) for c in data.columns]
+    ])
+    shape = shape or (len(data),)
+    data_mmap = np.memmap(filename, dtype=dtype, mode=mode, shape=shape)
+    return data_mmap
+
+
+def copy2mmap(data, data_mmap, flush=True):
+    """ Copy a pandas.DataFrame to a numpy.memmap. This operation is in-place.
+
+    :param data: A pandas.DataFrame of acceleration time-series.
+    :type data: pandas.DataFrame.
+    :param data_mmap: A numpy.memmap to copy data into.
+    :type data_mmap: numpy.memmap.
+    """
+    data_mmap[data.index.name] = data.index.to_numpy()
+    for c in data.columns:
+        data_mmap[c] = data[c].to_numpy()
+    if flush:
+        np.memmap.flush(data_mmap)
+    return
+
+
+def mmap2df(data_mmap, index_col='time', copy=True):
+    """ Convert a numpy structured array to pandas dataframe. """
+    columns = [c for c in data_mmap.dtype.names if c != index_col]
+    data = pd.DataFrame(
+        {c: np.asarray(data_mmap[c]) for c in columns}, copy=copy,
+        index=pd.Index(np.asarray(data_mmap[index_col]), name=index_col, copy=copy),
+    )
     return data
