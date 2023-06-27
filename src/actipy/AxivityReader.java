@@ -28,7 +28,7 @@ public class AxivityReader {
         itemNamesAndTypes.put("y", "Float");
         itemNamesAndTypes.put("z", "Float");
         itemNamesAndTypes.put("temperature", "Float");
-        // itemNamesAndTypes.put("lux", "Integer");  // unused for now
+        itemNamesAndTypes.put("light", "Float");
         ITEM_NAMES_AND_TYPES = Collections.unmodifiableMap(itemNamesAndTypes);
     }
 
@@ -129,7 +129,7 @@ public class AxivityReader {
 
             } else if (header.equals("AX")) {
                 int blockTimeInfo = (int) getUnsignedInt(block, 14);
-                // int light = getUnsignedShort(block, 18); // unused for now
+                float light = (float) Math.pow(10, (getUnsignedShort(block, 18) & 0x3ff) / 341.0);
                 float temperature = (float) ((getUnsignedShort(block, 20) * 150.0 - 20500) / 1000);
                 short rateCode = (short) (block.get(24) & 0xff);
                 short numAxesBPS = (short) (block.get(25) & 0xff);
@@ -221,7 +221,7 @@ public class AxivityReader {
                     t = blockStartTime + (double)i * (blockEndTime - blockStartTime) / sampleCount;
                     t *= 1000;  // secs to millis
 
-                    writer.write(toItems((long) t, x, y, z, temperature));
+                    writer.write(toItems((long) t, x, y, z, temperature, light));
 
                 }
 
@@ -293,20 +293,20 @@ public class AxivityReader {
     }
 
 
-    private static Map<String, Object> toItems(long t, float x, float y, float z, float temperature) {
+    private static Map<String, Object> toItems(long t, float x, float y, float z, float temperature, float light) {
         Map<String, Object> items = new HashMap<String, Object>();
         items.put("time", t);
         items.put("x", x);
         items.put("y", y);
         items.put("z", z);
         items.put("temperature", temperature);
-        // items.put("lux", light);
+        items.put("light", light);
         return items;
     }
 
 
-    private static Map<String, Object> toItems(long t, double x, double y, double z, double temperature) {
-        return toItems(t, (float) x, (float) y, (float) z, (float) temperature);
+    private static Map<String, Object> toItems(long t, double x, double y, double z, double temperature, float light) {
+        return toItems(t, (float) x, (float) y, (float) z, (float) temperature, (float) light);
     }
 
 
