@@ -128,7 +128,7 @@ public class AxivityReader {
                 return;
 
             } else if (header.equals("AX")) {
-                int blockTimeInfo = (int) getUnsignedInt(block, 14);
+                int blockTimeInfo = Math.toIntExact(getUnsignedInt(block, 14));
                 float light = (float) Math.pow(10, (getUnsignedShort(block, 18) & 0x3ff) / 341.0);
                 float temperature = (float) ((getUnsignedShort(block, 20) * 150.0 - 20500) / 1000);
                 short rateCode = (short) (block.get(24) & 0xff);
