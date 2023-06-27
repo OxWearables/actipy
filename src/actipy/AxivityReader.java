@@ -130,7 +130,7 @@ public class AxivityReader {
             } else if (header.equals("AX")) {
                 int blockTimeInfo = Math.toIntExact(getUnsignedInt(block, 14));
                 float light = (float) Math.pow(10, (getUnsignedShort(block, 18) & 0x3ff) / 341.0);
-                float temperature = (float) ((getUnsignedShort(block, 20) * 150.0 - 20500) / 1000);
+                float temperature = (float) (((getUnsignedShort(block, 20) & 0x3ff) * 150.0 - 20500) / 1000);
                 short rateCode = (short) (block.get(24) & 0xff);
                 short numAxesBPS = (short) (block.get(25) & 0xff);
                 int sampleCount = getUnsignedShort(block, 28);
