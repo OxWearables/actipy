@@ -2,6 +2,7 @@ import io
 from functools import lru_cache
 from pytest import approx
 import pandas as pd
+import joblib
 
 import actipy
 from actipy import processing as P
@@ -128,6 +129,21 @@ def test_detect_nonwear():
         'NumNonwearEpisodes': 1
     }
     assert_dict_equal(info_nonwear, info_nonwear_ref)
+
+
+def test_joblib():
+    """ Test joblib. """
+
+    results = joblib.Parallel(n_jobs=2)(
+        joblib.delayed(read_device)(
+            f'tests/data/tiny-sample{i}.cwa.gz', 
+            lowpass_hz=20,
+            calibrate_gravity=True,
+            detect_nonwear=True,
+            resample_hz=50,
+        ) 
+        for i in (1, 2)
+    )
 
 
 def assert_dict_equal(dict1, dict2, **kwargs):

@@ -67,6 +67,7 @@ setuptools.setup(
             "twine",
             "tomli",
             "pytest",
+            "joblib",
         ],
         "docs": [
             "sphinx>=4.2",
