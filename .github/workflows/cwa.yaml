@@ -38,11 +38,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install .
-          python -m pip install pytest
+          python -m pip install pytest joblib
 
       - name: Download test file
         run: |
           wget -P tests/data/ https://wearables-files.ndph.ox.ac.uk/files/data/samples/ax3/tiny-sample.cwa.gz --quiet
+          cp tests/data/tiny-sample.cwa.gz tests/data/tiny-sample1.cwa.gz  # make copies for multiprocessing test
+          cp tests/data/tiny-sample.cwa.gz tests/data/tiny-sample2.cwa.gz
 
       - name: Test with pytest
         run: |
