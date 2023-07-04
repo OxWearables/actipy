@@ -5,7 +5,6 @@ import pandas as pd
 import scipy.signal as signal
 import statsmodels.api as sm
 import warnings
-import uuid
 
 
 __all__ = ['lowpass', 'calibrate_gravity', 'detect_nonwear', 'resample', 'get_stationary_indicator']
@@ -90,7 +89,7 @@ def resample(data, sample_rate, dropna=False, chunksize=1_000_000):
     return data, info
 
 
-def lowpass(data, data_sample_rate, cutoff_rate=20):
+def lowpass(data, data_sample_rate, cutoff_rate=20, chunksize=1_000_000):
     """
     Apply Butterworth low-pass filter.
 
@@ -100,37 +99,68 @@ def lowpass(data, data_sample_rate, cutoff_rate=20):
     :type data_sample_rate: int or float
     :param cutoff_rate: Cutoff (Hz) for low-pass filter. Defaults to 20.
     :type cutoff_rate: int, optional
+    :param chunksize: Chunk size. Defaults to 1_000_000.
+    :type chunksize: int, optional
     :return: Processed data and processing info.
     :rtype: (pandas.DataFrame, dict)
     """
 
     info = {}
 
-    orig_index = data.index
-    data, _ = resample(data, data_sample_rate, dropna=False)
-
-    # Butter filter to remove high freq noise.
-    # Default: 20Hz (most of human motion is under 20Hz)
     # Skip this if the Nyquist freq is too low
-    if data_sample_rate / 2 > cutoff_rate:
-        xyz = data[['x', 'y', 'z']].to_numpy()
-        # Temporarily replace nans with 0s for butterfilt
-        where_nan = np.isnan(xyz).any(1)
-        xyz[where_nan] = 0
-        xyz = butterfilt(xyz, cutoff_rate, fs=data_sample_rate, axis=0)
-        # Now restore nans
-        xyz[where_nan] = np.nan
-        data[['x', 'y', 'z']] = xyz
-        info['LowpassOK'] = 1
-        info['LowpassCutoff(Hz)'] = cutoff_rate
-    else:
+    if data_sample_rate / 2 <= cutoff_rate:
         print(f"Skipping lowpass filter: data sample rate {data_sample_rate} too low for cutoff rate {cutoff_rate}")
         info['LowpassOK'] = 0
+        return data, info
 
-    data = data.reindex(orig_index,
-                        method='nearest',
-                        tolerance=pd.Timedelta('1s'),
-                        limit=1)
+    # # In-memory version
+    # xyz = data[['x', 'y', 'z']].to_numpy()
+    # where_nan = np.isnan(xyz).any(1)  # temporarily replace nans with 0s for butterfilt
+    # xyz[where_nan] = 0
+    # xyz = butterfilt(xyz, cutoff_rate, fs=data_sample_rate, axis=0)
+    # xyz[where_nan] = np.nan  # restore nans
+    # data = data.copy(deep=True)  # copy to avoid modifying original data
+    # data[['x', 'y', 'z']] = xyz
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # We use TemporaryDirectory() + filename instead of NamedTemporaryFile()
+        # because we don't want to open the file just yet:
+        # https://stackoverflow.com/questions/26541416/generate-temporary-file-names-without-creating-actual-file-in-python
+        # and Windows doesn't allow opening a file twice:
+        # https://docs.python.org/3.9/library/tempfile.html#tempfile.NamedTemporaryFile
+        mmap_fname = os.path.join(tmpdir, 'data.mmap')
+
+        n = len(data)
+        data_mmap = mmap_like(data, mmap_fname, shape=(n,))
+
+        leeway = 100  # used to minimize edge effects
+        for i in range(0, n, chunksize):
+
+            leeway0 = min(i, leeway)
+            istart = i - leeway0
+            istop = i + chunksize + leeway
+
+            chunk = data.iloc[istart : istop]
+            xyz = chunk[['x', 'y', 'z']].to_numpy()
+            na = np.isnan(xyz).any(1)
+            xyz[na] = 0.0  # temporarily replace nans with 0s for butterfilt
+            xyz = butterfilt(xyz, cutoff_rate, fs=data_sample_rate, axis=0)
+            xyz[na] = np.nan  # restore nans
+            chunk = chunk.copy(deep=True)  # copy to avoid modifying original data
+            chunk[['x', 'y', 'z']] = xyz
+            chunk = chunk.iloc[leeway0 : leeway0 + chunksize]  # trim leeway
+            copy2mmap(chunk, data_mmap[i:i + chunksize])
+
+        del data
+
+        # We need to copy so that the mmap file can be trully deleted: 
+        # https://stackoverflow.com/questions/24178460/in-python-is-it-possible-to-overload-numpys-memmap-to-delete-itself-when-the-m
+        data = mmap2df(data_mmap, copy=True)
+
+        del data_mmap
+
+    info['LowpassOK'] = 1
+    info['LowpassCutoff(Hz)'] = cutoff_rate
 
     return data, info
 
