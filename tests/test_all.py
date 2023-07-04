@@ -46,7 +46,8 @@ def test_lowpass():
     """ Test lowpass filtering. """
 
     data, info = read_device()
-    data, info_lowpass = P.lowpass(data, info['SampleRate'], cutoff_rate=20)
+    # Use a small chunksize to test the chunking
+    data, info_lowpass = P.lowpass(data, info['SampleRate'], cutoff_rate=20, chunksize=10_000)
 
     info_lowpass_ref = {
         'LowpassOK': 1, 
