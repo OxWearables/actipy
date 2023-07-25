@@ -169,24 +169,32 @@ def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, stationary_ind
     if stationary_indicator is None:
         stationary_indicator = get_stationary_indicator(data)
 
-    # The paper uses 10sec averages instead of the raw ticks.
-    # This reduces computational cost. Also reduces influence of outliers.
-    stationary_data = (data[stationary_indicator]
-                       .resample('10s')
-                       .mean()
-                       .dropna())
+    xyz = (data.loc[stationary_indicator, ['x', 'y', 'z']]
+           .resample('10s')
+           .mean()
+           .to_numpy())
 
-    hasT = 'temperature' in stationary_data
-
-    xyz = stationary_data[['x', 'y', 'z']].to_numpy()
     # Remove any nonzero vectors as they cause nan issues
     nonzero = np.linalg.norm(xyz, axis=1) > 1e-8
     xyz = xyz[nonzero]
+
+    hasT = 'temperature' in data
     if hasT:
-        T = stationary_data['temperature'].to_numpy()
+        T = (data.loc[stationary_indicator, 'temperature']
+             .resample('10s')
+             .mean()
+             .to_numpy())
         T = T[nonzero]
-    del stationary_data
+
+    # Remove any nans
+    na = np.isnan(xyz).any(1)
+    if hasT:
+        na = na | np.isnan(T)
+        T = T[~na]
+    xyz = xyz[~na]
+
     del nonzero
+    del na
 
     if len(xyz) < calib_min_samples:
         info['CalibOK'] = 0
