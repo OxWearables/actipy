@@ -216,7 +216,7 @@ def detect_nonwear(data, patience='90m', stationary_indicator=None, drop=False):
     return data, info
 
 
-def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, stationary_indicator=None):  # noqa: C901
+def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, stationary_indicator=None, chunksize=1_000_000):  # noqa: C901
     """
     Gravity calibration method of van Hees et al. 2014 (https://pubmed.ncbi.nlm.nih.gov/25103964/)
 
@@ -231,6 +231,8 @@ def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, stationary_ind
         indicating stationary (low movement) periods. If None, it will be
         automatically inferred. Defaults to None.
     :type stationary_indicator: pandas.Series, optional
+    :param chunksize: Chunk size. Defaults to 1_000_000.
+    :type chunksize: int, optional
     :return: Processed data and processing info.
     :rtype: (pandas.DataFrame, dict)
     """
@@ -359,12 +361,50 @@ def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, stationary_ind
         return data, info
 
     else:
-        data = data.copy()
-        data[['x', 'y', 'z']] = (best_intercept
-                                 + best_slope * data[['x', 'y', 'z']].to_numpy())
-        if hasT:
-            data[['x', 'y', 'z']] = (data[['x', 'y', 'z']]
-                                     + best_slopeT * (data['temperature'].to_numpy()[:, None]))
+
+        # # In-memory version
+        # data = data.copy()
+        # data[['x', 'y', 'z']] = (best_intercept
+        #                          + best_slope * data[['x', 'y', 'z']].to_numpy())
+        # if hasT:
+        #     data[['x', 'y', 'z']] = (data[['x', 'y', 'z']]
+        #                              + best_slopeT * (data['temperature'].to_numpy()[:, None]))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # We use TemporaryDirectory() + filename instead of NamedTemporaryFile()
+            # because we don't want to open the file just yet:
+            # https://stackoverflow.com/questions/26541416/generate-temporary-file-names-without-creating-actual-file-in-python
+            # and Windows doesn't allow opening a file twice:
+            # https://docs.python.org/3.9/library/tempfile.html#tempfile.NamedTemporaryFile
+
+            n = len(data)
+            mmap_fname = os.path.join(tmpdir, 'data.mmap')
+            data_mmap = mmap_like(data, mmap_fname, shape=(n,))
+
+            for i in range(0, n, chunksize):
+
+                # If last chunk, adjust chunksize
+                if i + chunksize > n:
+                    chunksize = n - i
+
+                chunk = data.iloc[i:i + chunksize]
+                chunk_xyz = chunk[['x', 'y', 'z']].to_numpy()
+                chunk_xyz = best_intercept + best_slope * chunk_xyz
+                if hasT:
+                    chunk_T = chunk['temperature'].to_numpy()
+                    chunk_xyz = chunk_xyz + best_slopeT * chunk_T[:, None]
+                chunk = chunk.copy(deep=True)  # copy to avoid modifying original data
+                chunk[['x', 'y', 'z']] = chunk_xyz
+
+                copy2mmap(chunk, data_mmap[i:i + chunksize])
+
+            del data
+
+            # We need to copy so that the mmap file can be trully deleted: 
+            # https://stackoverflow.com/questions/24178460/in-python-is-it-possible-to-overload-numpys-memmap-to-delete-itself-when-the-m
+            data = mmap2df(data_mmap, copy=True)
+
+            del data_mmap
 
         info['CalibOK'] = 1
         info['CalibNumIters'] = it + 1
