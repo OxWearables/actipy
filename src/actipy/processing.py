@@ -165,7 +165,7 @@ def lowpass(data, data_sample_rate, cutoff_rate=20, chunksize=1_000_000):
     return data, info
 
 
-def detect_nonwear(data, patience='90m', stationary_indicator=None, drop=False):
+def detect_nonwear(data, patience='90m', window='10s', stdtol=15 / 1000):
     """
     Detect nonwear episodes based on long periods of no movement.
 
@@ -187,31 +187,44 @@ def detect_nonwear(data, patience='90m', stationary_indicator=None, drop=False):
 
     info = {}
 
-    if stationary_indicator is None:
-        stationary_indicator = get_stationary_indicator(data)
+    stationary_indicator = (  # this is more memory friendly than of data[['x', 'y', 'z']].std()
+        data['x'].resample(window, origin='start').std().lt(stdtol)
+        & data['y'].resample(window, origin='start').std().lt(stdtol)
+        & data['z'].resample(window, origin='start').std().lt(stdtol)
+    )
 
-    group = ((stationary_indicator != stationary_indicator.shift(1))
-             .cumsum()
-             .where(stationary_indicator))
-    stationary_len = (group.groupby(group, dropna=True, group_keys=False)
-                           .apply(lambda g: g.index[-1] - g.index[0]))
-    if len(stationary_len) > 0:
-        nonwear_len = stationary_len[stationary_len > pd.Timedelta(patience)]
-    else:
-        nonwear_len = pd.Series(dtype='timedelta64[ns]')  # empty series
+    segment_edges = (stationary_indicator != stationary_indicator.shift(1))
+    segment_edges.iloc[0] = True  # first edge is always True
+    segment_ids = segment_edges.cumsum()
+    stationary_segment_ids = segment_ids[stationary_indicator]
+    stationary_segment_lengths = (
+        stationary_segment_ids
+        .groupby(stationary_segment_ids)
+        .agg(
+            start_time=lambda x: x.index[0],
+            length=lambda x: x.index[-1] - x.index[0]
+        )
+        .set_index('start_time')
+        .squeeze()
+    )
+    nonwear_segment_lengths = stationary_segment_lengths[stationary_segment_lengths > pd.Timedelta(patience)]
 
-    nonwear_time = nonwear_len.sum().total_seconds()
-    wear_time, _ = get_wear_time(data.index.to_series())
-    info['WearTime(days)'] = (wear_time - nonwear_time) / (60 * 60 * 24)  # update wear time
-    info['NonwearTime(days)'] = nonwear_time / (60 * 60 * 24)
-    info['NumNonwearEpisodes'] = len(nonwear_len)
+    count_nonwear = len(nonwear_segment_lengths)
+    total_nonwear = nonwear_segment_lengths.sum().total_seconds()
+    total_wear = (
+        data.index.to_series().diff()
+        .pipe(lambda x: x[x < pd.Timedelta('1s')].sum())
+        .total_seconds()
+    ) - total_nonwear
 
-    # Flag nonwear
-    nonwear_indicator = group.isin(nonwear_len.index)
-    if drop:
-        data = data[~nonwear_indicator]
-    else:
-        data = data.mask(nonwear_indicator)
+    info['WearTime(days)'] = total_wear / (60 * 60 * 24)
+    info['NonwearTime(days)'] = total_nonwear / (60 * 60 * 24)
+    info['NumNonwearEpisodes'] = count_nonwear
+
+    # Flag nonwear segments
+    data = data.copy(deep=True)  # copy to avoid modifying original data
+    for start_time, length in nonwear_segment_lengths.items():
+        data.loc[start_time:start_time + length] = np.nan
 
     return data, info
 
