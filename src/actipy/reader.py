@@ -46,16 +46,48 @@ def read_device(input_file,
     :rtype: (pandas.DataFrame, dict)
     """
 
-    data, info_read = _read_device(input_file, verbose)
+    timer = Timer(verbose)
 
-    data, info_process = process(data, info_read['SampleRate'],
-                                 lowpass_hz=lowpass_hz,
-                                 calibrate_gravity=calibrate_gravity,
-                                 detect_nonwear=detect_nonwear,
-                                 resample_hz=resample_hz,
-                                 verbose=verbose)
+    data, info = _read_device(input_file, verbose)
 
-    info = {**info_read, **info_process}
+    # data, info_process = process(data, info_read['SampleRate'],
+    #                              lowpass_hz=lowpass_hz,
+    #                              calibrate_gravity=calibrate_gravity,
+    #                              detect_nonwear=detect_nonwear,
+    #                              resample_hz=resample_hz,
+    #                              verbose=verbose)
+
+    # NOTE: Using process() increases data ref count by 1, which increases
+    # memory. So instead we just do everything here.
+
+    sample_rate = info['SampleRate']
+
+    if lowpass_hz not in (None, False):
+        timer.start("Lowpass filter...")
+        data, info_lowpass = P.lowpass(data, sample_rate, lowpass_hz)
+        info.update(info_lowpass)
+        timer.stop()
+
+    if calibrate_gravity:
+        timer.start("Gravity calibration...")
+        data, info_calib = P.calibrate_gravity(data)
+        info.update(info_calib)
+        timer.stop()
+
+    if detect_nonwear:
+        timer.start("Nonwear detection...")
+        data, info_nonwear = P.detect_nonwear(data)
+        info.update(info_nonwear)
+        timer.stop()
+
+    if resample_hz not in (None, False):
+        timer.start("Resampling...")
+        if resample_hz in ('uniform', True):
+            data, info_resample = P.resample(data, sample_rate)
+        else:
+            data, info_resample = P.resample(data, resample_hz)
+        info.update(info_resample)
+        timer.stop()
 
     return data, info
 
