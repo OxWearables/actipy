@@ -201,22 +201,38 @@ def _read_device(input_file, verbose=True):
         timer.stop()
 
         timer.start("Converting to dataframe...")
-        # Load parsed data to a pandas dataframe
-        data = P.npy2df(np.load(tmpout, mmap_mode='r+')).copy()  # Note: needs copy or cleanup below will fail
-        # Fix if time non-increasing (rarely occurs)
-        data, nonincr_time_errs = fix_nonincr_time(data)
-        # Update read errors. Non-increasing time errors scaled by sample rate
-        info['ReadErrors'] += int(np.ceil(nonincr_time_errs / info['SampleRate']))
-        timer.stop()
+        # NOTE: Care is taken to avoid excessive memory usage. First we open the
+        # file as mmap, then we load each column using np.asarray (np.array uses
+        # more memory - not sure why), and finally we convert to
+        # pandas.DataFrame with copy=False to avoid re-copying.
+        data_mmap = np.load(tmpout, mmap_mode='r')
+        data = {c: np.asarray(data_mmap[c]) for c in [c for c in data_mmap.dtype.names if c != 'time']}
+        # The following uses extra memory. TODO: Parser should return datetime64[ms] already.
+        # NOTE: Use pd.to_datetime(unit='ms') instead of np.asarray(dtype='datetime64[ms]').
+        # The latter is buggy e.g. .diff() not working properly. Also, for some
+        # reason, Pandas operations are much slower if we use the latter (e.g.
+        # .reindex). The difference is that pd.to_datetime converts to
+        # datetime64[ns] dtype even with unit='ms'.
+        # data['time'] = np.asarray(data_mmap['time'], dtype='datetime64[ms]')  # <- DO NOT USE
+        data['time'] = pd.to_datetime(data_mmap['time'], unit='ms')
+        data = pd.DataFrame(data, copy=False)
 
         # Start/end times, wear time, interrupts
-        t = data.index.to_series()
+        t = data['time']
+        tol = pd.Timedelta('1s')
+        total_wear = (t.diff().pipe(lambda x: x[x < tol].sum()).total_seconds())
+        num_interrupts = (t.diff() > tol).sum()
         strftime = "%Y-%m-%d %H:%M:%S"
-        info['StartTime'], info['EndTime'] = t[0].strftime(strftime), t[-1].strftime(strftime)
         info['NumTicks'] = len(data)
-        wear_time, num_interrupts = P.get_wear_time(t)
-        info['WearTime(days)'] = wear_time / (60 * 60 * 24)
+        info['StartTime'] = t.iloc[0].strftime(strftime)
+        info['EndTime'] = t.iloc[-1].strftime(strftime)
+        info['WearTime(days)'] = total_wear / (60 * 60 * 24)
         info['NumInterrupts'] = num_interrupts
+        del t
+
+        data.set_index('time', inplace=True)
+
+        timer.stop()
 
         return data, info
 
