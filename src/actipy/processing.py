@@ -229,7 +229,7 @@ def detect_nonwear(data, patience='90m', window='10s', stdtol=15 / 1000):
     return data, info
 
 
-def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, stationary_indicator=None, chunksize=1_000_000):  # noqa: C901
+def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, window='10s', stdtol=15 / 1000, chunksize=1_000_000):  # noqa: C901
     """
     Gravity calibration method of van Hees et al. 2014 (https://pubmed.ncbi.nlm.nih.gov/25103964/)
 
@@ -252,41 +252,42 @@ def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, stationary_ind
 
     info = {}
 
-    if stationary_indicator is None:
-        stationary_indicator = get_stationary_indicator(data)
+    stationary_indicator = (  # this is more memory friendly than of data[['x', 'y', 'z']].std()
+        data['x'].resample(window, origin='start').std().lt(stdtol)
+        & data['y'].resample(window, origin='start').std().lt(stdtol)
+        & data['z'].resample(window, origin='start').std().lt(stdtol)
+    )
 
-    xyz = (data.loc[stationary_indicator, ['x', 'y', 'z']]
-           .resample('10s')
-           .mean()
-           .to_numpy())
-
+    xyz = (
+        data[['x', 'y', 'z']]
+        .resample(window, origin='start').mean()
+        [stationary_indicator]
+        .dropna()
+        .to_numpy()
+    )
     # Remove any nonzero vectors as they cause nan issues
     nonzero = np.linalg.norm(xyz, axis=1) > 1e-8
     xyz = xyz[nonzero]
 
     hasT = 'temperature' in data
     if hasT:
-        T = (data.loc[stationary_indicator, 'temperature']
-             .resample('10s')
-             .mean()
-             .to_numpy())
+        T = (
+            data['temperature']
+            .resample(window, origin='start').mean()
+            [stationary_indicator]
+            .dropna()
+            .to_numpy()
+        )
         T = T[nonzero]
 
-    # Remove any nans
-    na = np.isnan(xyz).any(1)
-    if hasT:
-        na = na | np.isnan(T)
-        T = T[~na]
-    xyz = xyz[~na]
-
+    del stationary_indicator
     del nonzero
-    del na
 
     if len(xyz) < calib_min_samples:
         info['CalibOK'] = 0
         info['CalibErrorBefore(mg)'] = np.nan
         info['CalibErrorAfter(mg)'] = np.nan
-        warnings.warn(f"Skipping calibration: Insufficient stationary samples")
+        warnings.warn(f"Skipping calibration: Insufficient stationary samples: {len(xyz)} < {calib_min_samples}")
         return data, info
 
     intercept = np.array([0.0, 0.0, 0.0], dtype=xyz.dtype)
