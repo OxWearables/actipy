@@ -132,4 +132,6 @@ data/
 *.bin
 *.bin.gz
 *.npy
+*.pkl
+*.pkl.gz
 memray-*
