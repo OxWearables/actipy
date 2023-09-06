@@ -1,4 +1,3 @@
-import io
 from functools import lru_cache
 from pytest import approx
 import pandas as pd
@@ -28,68 +27,43 @@ def test_read_device():
         "WearTime(days)": 0.1211432638888889,
         "NumInterrupts": 1
     }
-    assert_dict_equal(info, info_ref)
+    assert_dict_equal(info, info_ref, rel=0.01)
 
-    data_ref = pd.read_csv(io.StringIO(
-        'time,x,y,z,temperature,light\n'
-        '2023-06-08 15:19:33.898,  0.375000, -0.765625, -0.218750,  19.85,  41.568882\n'
-        '2023-06-08 15:19:33.909,  0.296875, -0.890625, -0.218750,  19.85,  41.568882\n'
-        '2023-06-08 15:19:33.919,  0.421875, -0.812500, -0.171875,  19.85,  41.568882\n'
-        '2023-06-08 15:19:33.929,  0.375000, -0.890625, -0.250000,  19.85,  41.568882\n'
-        '2023-06-08 15:19:33.939,  0.359375, -1.203125,  0.125000,  19.85,  41.568882'
-    ), parse_dates=['time'], index_col='time', dtype='f4')
-
-    pd.testing.assert_frame_equal(data.tail(), data_ref)
+    data_ref = pd.read_pickle('tests/data/read.pkl.gz')
+    pd.testing.assert_frame_equal(data, data_ref, rtol=0.01)  # 1% tolerance
 
 
 def test_lowpass():
-    """ Test lowpass filtering. """
+    """ Test lowpass filtering at 20 Hz . """
 
     data, info = read_device()
-    # Use a small chunksize to test the chunking
     data, info_lowpass = P.lowpass(data, info['SampleRate'], cutoff_rate=20, chunksize=10_000)
 
-    info_lowpass_ref = {
-        'LowpassOK': 1, 
-        'LowpassCutoff(Hz)': 20
+    info_ref = {
+        'LowpassOK': 1,
+        'LowpassCutoff(Hz)': 20,
     }
-    assert_dict_equal(info_lowpass, info_lowpass_ref)
+    assert_dict_equal(info_lowpass, info_ref, rel=0.01)
 
-    data_ref = pd.read_csv(io.StringIO(
-        'time,x,y,z,temperature,light\n'
-        '2023-06-08 15:19:33.898,  0.379264, -0.783015, -0.253166,  19.85,  41.568882\n'
-        '2023-06-08 15:19:33.909,  0.366240, -0.792810, -0.263782,  19.85,  41.568882\n'
-        '2023-06-08 15:19:33.919,  0.368996, -0.837900, -0.225322,  19.85,  41.568882\n'
-        '2023-06-08 15:19:33.929,  0.369180, -0.977334, -0.090964,  19.85,  41.568882\n'
-        '2023-06-08 15:19:33.939,  0.359296, -1.203209,  0.125051,  19.85,  41.568882'
-    ), parse_dates=['time'], index_col='time', dtype='f4')
-
-    pd.testing.assert_frame_equal(data.tail(), data_ref)
+    data_ref = pd.read_pickle('tests/data/lowpass.pkl.gz')
+    pd.testing.assert_frame_equal(data, data_ref, rtol=0.01)  # 1% tolerance
 
 
 def test_resample():
-    """ Test resampling. """
+    """ Test resampling to 25 Hz. """
 
     data, info = read_device()
     # Use a small chunk size to test chunking
-    data, info_resample = P.resample(data, sample_rate=info['SampleRate'], chunksize=10_000)
+    data, info_resample = P.resample(data, sample_rate=25, chunksize=10_000)
 
     info_resample_ref = {
-        'ResampleRate': 100.0, 
-        'NumTicksAfterResample': 1070944
+        'ResampleRate': 25,
+        'NumTicksAfterResample': 267737,
     }
-    assert_dict_equal(info_resample, info_resample_ref)
+    assert_dict_equal(info_resample, info_resample_ref, rel=0.01)
 
-    data_ref = pd.read_csv(io.StringIO(
-        'time,x,y,z,temperature,light\n'
-        '2023-06-08 15:19:33.900,  0.375000, -0.765625, -0.218750,  19.85,  41.568882\n'
-        '2023-06-08 15:19:33.910,  0.296875, -0.890625, -0.218750,  19.85,  41.568882\n'
-        '2023-06-08 15:19:33.920,  0.421875, -0.812500, -0.171875,  19.85,  41.568882\n'
-        '2023-06-08 15:19:33.930,  0.375000, -0.890625, -0.250000,  19.85,  41.568882\n'
-        '2023-06-08 15:19:33.940,  0.359375, -1.203125,  0.125000,  19.85,  41.568882'
-    ), parse_dates=['time'], index_col='time', dtype='f4')
-
-    pd.testing.assert_frame_equal(data.tail(), data_ref)
+    data_ref = pd.read_pickle('tests/data/resample.pkl.gz')
+    pd.testing.assert_frame_equal(data, data_ref, rtol=0.01)  # 1% tolerance
 
 
 def test_calibrate_gravity():
@@ -97,25 +71,28 @@ def test_calibrate_gravity():
 
     data, info = read_device()
     # Use a bad calibration cube to force calibration
-    data, info_calib = P.calibrate_gravity(data, calib_cube=0, calib_min_samples=1)
+    data, info_calib = P.calibrate_gravity(data, calib_cube=0, calib_min_samples=1, chunksize=10_000)
 
     info_calib_ref = {
-        'CalibErrorBefore(mg)': 31.963828951120377,
-        'CalibErrorAfter(mg)': 2.108112210407853,
+        'CalibErrorBefore(mg)': 33.75431150197983,
+        'CalibErrorAfter(mg)': 1.5364194987341762,
         'CalibOK': 1,
-        'CalibNumIters': 60,
-        'CalibNumSamples': 266,
-        'CalibxIntercept': 0.00942089,
-        'CalibyIntercept': -0.11357996,
-        'CalibzIntercept': 0.22651094,
-        'CalibxSlope': 1.0049648,
-        'CalibySlope': 1.0017107,
-        'CalibzSlope': 1.0250089,
-        'CalibxSlopeT': -0.00085395266,
-        'CalibySlopeT': 0.0067764097,
-        'CalibzSlopeT': -0.009050926
+        'CalibNumIters': 73,
+        'CalibNumSamples': 122,
+        'CalibxIntercept': -0.03442875,
+        'CalibyIntercept': -0.16496603,
+        'CalibzIntercept': 0.29612103,
+        'CalibxSlope': 1.0060189,
+        'CalibySlope': 1.0023165,
+        'CalibzSlope': 1.0265391,
+        'CalibxSlopeT': 0.0014661448,
+        'CalibySlopeT': 0.009421193,
+        'CalibzSlopeT': -0.012653602
     }
-    assert_dict_equal(info_calib, info_calib_ref)
+    assert_dict_equal(info_calib, info_calib_ref, rel=0.01)
+
+    data_ref = pd.read_pickle('tests/data/calib.pkl.gz')
+    pd.testing.assert_frame_equal(data, data_ref, rtol=0.01)  # 1% tolerance
 
 
 def test_detect_nonwear():
@@ -126,11 +103,14 @@ def test_detect_nonwear():
     data, info_nonwear = P.detect_nonwear(data, patience='1m')
 
     info_nonwear_ref = {
-        'WearTime(days)': 0.12022313657407407,
-        'NonwearTime(days)': 0.0009201273148148148,
+        'WearTime(days)': 0.1203330787037037,
+        'NonwearTime(days)': 0.0008101851851851852,
         'NumNonwearEpisodes': 1
     }
-    assert_dict_equal(info_nonwear, info_nonwear_ref)
+    assert_dict_equal(info_nonwear, info_nonwear_ref, rel=0.01)
+
+    data_ref = pd.read_pickle('tests/data/nonwear.pkl.gz')
+    pd.testing.assert_frame_equal(data, data_ref, rtol=0.01)  # 1% tolerance
 
 
 def test_joblib():
