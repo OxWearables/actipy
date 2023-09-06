@@ -134,23 +134,15 @@ def process(data, sample_rate,
         info.update(info_lowpass)
         timer.stop()
 
-    # Used for calibration and nonwear detection
-    # If needed, compute it once as it's expensive
-    stationary_indicator = None
-    if calibrate_gravity or detect_nonwear:
-        timer.start("Getting stationary points...")
-        stationary_indicator = P.get_stationary_indicator(data)
-        timer.stop()
-
     if calibrate_gravity:
         timer.start("Gravity calibration...")
-        data, info_calib = P.calibrate_gravity(data, stationary_indicator=stationary_indicator)
+        data, info_calib = P.calibrate_gravity(data)
         info.update(info_calib)
         timer.stop()
 
     if detect_nonwear:
         timer.start("Nonwear detection...")
-        data, info_nonwear = P.detect_nonwear(data, stationary_indicator=stationary_indicator)
+        data, info_nonwear = P.detect_nonwear(data)
         info.update(info_nonwear)
         timer.stop()
 
