@@ -46,14 +46,14 @@ def main():
     if args.calibrate_gravity:
         timer.start('Calibrating gravity...')
         with memray.Tracker(f'{memray_dir}/calibrate_gravity.bin'):
-            data, info_calibrate = P.calibrate_gravity(data)
+            data, info_calibrate = P.calibrate_gravity(data, calib_cube=0, calib_min_samples=1)
         timer.stop()
         info.update(info_calibrate)
 
     if args.detect_nonwear:
         timer.start('Detecting nonwear...')
         with memray.Tracker(f'{memray_dir}/detect_nonwear.bin'):
-            data, info_nonwear = P.detect_nonwear(data)
+            data, info_nonwear = P.detect_nonwear(data, patience='1m')
         timer.stop()
         info.update(info_nonwear)
 
@@ -69,7 +69,7 @@ def main():
         if fname.endswith('.bin'):
             subprocess.run(['python3', '-m', 'memray', 'flamegraph', f'{memray_dir}/{fname}'], check=True)
 
-    print(data.head())
+    print(data)
 
     # Pretty print info
     for k, v in info.items():
