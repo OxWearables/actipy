@@ -209,6 +209,18 @@ def _read_device(input_file, verbose=True):
         data['time'] = pd.to_datetime(data_mmap['time'], unit='ms')
         data = pd.DataFrame(data, copy=False)
 
+        # Check for non-increasing timestamps. This is rare but can happen with
+        # buggy devices. TODO: Parser should do this.
+        errs = (data['time'].diff() <= pd.Timedelta(0)).sum()
+        if errs > 0:
+            print("Found non-increasing data timestamps. Fixing...")
+            data = data[data['time']
+                        .cummax()
+                        .diff()
+                        .fillna(pd.Timedelta(1))
+                        > pd.Timedelta(0)]
+            info['ReadErrors'] += int(np.ceil(errs / info['SampleRate']))
+
         # Start/end times, wear time, interrupts
         t = data['time']
         tol = pd.Timedelta('1s')
