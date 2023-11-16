@@ -67,6 +67,7 @@ setuptools.setup(
             "tomli",
             "pytest",
             "joblib",
+            "memray"
         ],
         "docs": [
             "sphinx>=4.2",
