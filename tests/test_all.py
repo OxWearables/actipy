@@ -29,7 +29,7 @@ def test_read_device():
     }
     assert_dict_equal(info, info_ref, rel=0.01)
 
-    data_ref = pd.read_pickle('tests/data/read.pkl.gz')
+    data_ref = read_csv('tests/data/read.csv.gz')
     pd.testing.assert_frame_equal(data, data_ref, rtol=0.01)  # 1% tolerance
 
 
@@ -45,7 +45,7 @@ def test_lowpass():
     }
     assert_dict_equal(info_lowpass, info_ref, rel=0.01)
 
-    data_ref = pd.read_pickle('tests/data/lowpass.pkl.gz')
+    data_ref = read_csv('tests/data/lowpass.csv.gz')
     pd.testing.assert_frame_equal(data, data_ref, rtol=0.01)  # 1% tolerance
 
 
@@ -62,7 +62,7 @@ def test_resample():
     }
     assert_dict_equal(info_resample, info_resample_ref, rel=0.01)
 
-    data_ref = pd.read_pickle('tests/data/resample.pkl.gz')
+    data_ref = read_csv('tests/data/resample.csv.gz')
     pd.testing.assert_frame_equal(data, data_ref, rtol=0.01)  # 1% tolerance
 
 
@@ -91,7 +91,7 @@ def test_calibrate_gravity():
     }
     assert_dict_equal(info_calib, info_calib_ref, rel=0.01)
 
-    data_ref = pd.read_pickle('tests/data/calib.pkl.gz')
+    data_ref = read_csv('tests/data/calib.csv.gz')
     pd.testing.assert_frame_equal(data, data_ref, rtol=0.01)  # 1% tolerance
 
 
@@ -109,7 +109,7 @@ def test_detect_nonwear():
     }
     assert_dict_equal(info_nonwear, info_nonwear_ref, rel=0.01)
 
-    data_ref = pd.read_pickle('tests/data/nonwear.pkl.gz')
+    data_ref = read_csv('tests/data/nonwear.csv.gz')
     pd.testing.assert_frame_equal(data, data_ref, rtol=0.01)  # 1% tolerance
 
 
@@ -150,4 +150,19 @@ def read_device(
         calibrate_gravity=calibrate_gravity,
         detect_nonwear=detect_nonwear,
         resample_hz=resample_hz,
+    )
+
+
+def read_csv(fpath):
+    """ Read a CSV file. """
+    return pd.read_csv(
+        fpath,
+        parse_dates=['time'], index_col='time',
+        dtype={
+            'x': 'f4',
+            'y': 'f4',
+            'z': 'f4',
+            'temperature': 'f4',
+            'light': 'f4'
+        }
     )

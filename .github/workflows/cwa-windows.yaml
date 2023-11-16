@@ -44,11 +44,11 @@ jobs:
         run: |
           mkdir tests\data
           curl --output-dir tests\data\ -O https://wearables-files.ndph.ox.ac.uk/files/data/samples/ax3/tiny-sample.cwa.gz
-          curl --output-dir tests\data\ -O https://wearables-files.ndph.ox.ac.uk/files/actipy/tests/data/read.pkl.gz
-          curl --output-dir tests\data\ -O https://wearables-files.ndph.ox.ac.uk/files/actipy/tests/data/lowpass.pkl.gz
-          curl --output-dir tests\data\ -O https://wearables-files.ndph.ox.ac.uk/files/actipy/tests/data/calib.pkl.gz
-          curl --output-dir tests\data\ -O https://wearables-files.ndph.ox.ac.uk/files/actipy/tests/data/nonwear.pkl.gz
-          curl --output-dir tests\data\ -O https://wearables-files.ndph.ox.ac.uk/files/actipy/tests/data/resample.pkl.gz
+          curl --output-dir tests\data\ -O https://wearables-files.ndph.ox.ac.uk/files/actipy/tests/data/read.csv.gz
+          curl --output-dir tests\data\ -O https://wearables-files.ndph.ox.ac.uk/files/actipy/tests/data/lowpass.csv.gz
+          curl --output-dir tests\data\ -O https://wearables-files.ndph.ox.ac.uk/files/actipy/tests/data/calib.csv.gz
+          curl --output-dir tests\data\ -O https://wearables-files.ndph.ox.ac.uk/files/actipy/tests/data/nonwear.csv.gz
+          curl --output-dir tests\data\ -O https://wearables-files.ndph.ox.ac.uk/files/actipy/tests/data/resample.csv.gz
           copy tests\data\tiny-sample.cwa.gz tests\data\tiny-sample1.cwa.gz  # make copies for multiprocessing test
           copy tests\data\tiny-sample.cwa.gz tests\data\tiny-sample2.cwa.gz
 
