@@ -39,7 +39,8 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.x"
+          # python-version: "3.x"
+          python-version: "3.11"  # setuptools not working in 3.12
 
       - name: Build source and wheel distributions
         run: |
