@@ -18,7 +18,7 @@ public class GENEActivReader {
     private static final Map<String, String> ITEM_NAMES_AND_TYPES;
     static{
         Map<String, String> itemNamesAndTypes = new LinkedHashMap<String, String>();
-        itemNamesAndTypes.put("time", "Long");
+        itemNamesAndTypes.put("time", "Datetime");
         itemNamesAndTypes.put("x", "Float");
         itemNamesAndTypes.put("y", "Float");
         itemNamesAndTypes.put("z", "Float");
@@ -121,7 +121,7 @@ public class GENEActivReader {
 
                         t = (double)blockTime + (double)i * (1.0 / freq) * 1000;  // Unix millis
 
-                        writer.write(toItems((long) t, x, y, z, temperature));
+                        writer.write(toItems(TimeUnit.MILLISECONDS.toNanos((long) t), x, y, z, temperature));
 
                         hexPosition += 12;
                         i++;

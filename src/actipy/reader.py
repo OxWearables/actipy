@@ -198,15 +198,7 @@ def _read_device(input_file, verbose=True):
         # more memory - not sure why), and finally we convert to
         # pandas.DataFrame with copy=False to avoid re-copying.
         data_mmap = np.load(tmpout, mmap_mode='r')
-        data = {c: np.asarray(data_mmap[c]) for c in [c for c in data_mmap.dtype.names if c != 'time']}
-        # The following uses extra memory. TODO: Parser should return datetime64[ms] already.
-        # NOTE: Use pd.to_datetime(unit='ms') instead of np.asarray(dtype='datetime64[ms]').
-        # The latter is buggy e.g. .diff() not working properly. Also, for some
-        # reason, Pandas operations are much slower if we use the latter (e.g.
-        # .reindex). The difference is that pd.to_datetime converts to
-        # datetime64[ns] dtype even with unit='ms'.
-        # data['time'] = np.asarray(data_mmap['time'], dtype='datetime64[ms]')  # <- DO NOT USE
-        data['time'] = pd.to_datetime(data_mmap['time'], unit='ms')
+        data = {c: np.asarray(data_mmap[c]) for c in data_mmap.dtype.names}
         data = pd.DataFrame(data, copy=False)
 
         # Check for non-increasing timestamps. This is rare but can happen with

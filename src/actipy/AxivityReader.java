@@ -23,7 +23,7 @@ public class AxivityReader {
     private static final Map<String, String> ITEM_NAMES_AND_TYPES;
     static{
         Map<String, String> itemNamesAndTypes = new LinkedHashMap<String, String>();
-        itemNamesAndTypes.put("time", "Long");
+        itemNamesAndTypes.put("time", "Datetime");
         itemNamesAndTypes.put("x", "Float");
         itemNamesAndTypes.put("y", "Float");
         itemNamesAndTypes.put("z", "Float");
@@ -221,7 +221,7 @@ public class AxivityReader {
                     t = blockStartTime + (double)i * (blockEndTime - blockStartTime) / sampleCount;
                     t *= 1000;  // secs to millis
 
-                    writer.write(toItems((long) t, x, y, z, temperature, light));
+                    writer.write(toItems(TimeUnit.MILLISECONDS.toNanos((long) t), x, y, z, temperature, light));
 
                 }
 

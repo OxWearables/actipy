@@ -9,6 +9,7 @@ import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.zip.ZipEntry;
@@ -27,7 +28,7 @@ public class ActigraphReader {
     private static final Map<String, String> ITEM_NAMES_AND_TYPES;
     static{
         Map<String, String> itemNamesAndTypes = new LinkedHashMap<String, String>();
-        itemNamesAndTypes.put("time", "Long");
+        itemNamesAndTypes.put("time", "Datetime");
         itemNamesAndTypes.put("x", "Float");
         itemNamesAndTypes.put("y", "Float");
         itemNamesAndTypes.put("z", "Float");
@@ -399,15 +400,15 @@ public class ActigraphReader {
                     twoSampleCounter--;
                     i=0;
 
-                    long time = Math.round((1000d*samples)/sampleRate) + firstSampleTime;
+                    long t = Math.round((1000d*samples)/sampleRate) + firstSampleTime;
                     double x = twoSamples[3-twoSampleCounter*3];
                     double y = twoSamples[4-twoSampleCounter*3];
                     double z = twoSamples[5-twoSampleCounter*3];
                     // double temp = 1.0d; // don't know temp yet
-                    time = getTrueUnixTime(time, infoTimeShift);
+                    t = getTrueUnixTime(t, infoTimeShift);
 
                     try {
-                        writer.write(toItems(time, x, y, z));
+                        writer.write(toItems(TimeUnit.MILLISECONDS.toNanos(t), x, y, z));
                     } catch (Exception e) {
                         System.err.println("Line write error: " + e.toString());
                     }

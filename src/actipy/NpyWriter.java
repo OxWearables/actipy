@@ -108,6 +108,10 @@ public class NpyWriter {
 				buf.putDouble((double) item);
 				break;
 
+			case "Datetime":
+				buf.putLong((long) item); // datetime64[ns] is represented as 64-bit integer
+				break;
+
 			default:
 				throw new IllegalArgumentException("Unrecognized item type: " + type);
 
@@ -251,7 +255,7 @@ public class NpyWriter {
 
 	private static Map<String, String> getDefaultItemNamesAndTypes() {
 		Map<String, String> itemNamesAndTypes = new LinkedHashMap<String, String>();
-		itemNamesAndTypes.put("time", "Long");
+		itemNamesAndTypes.put("time", "Datetime");
 		itemNamesAndTypes.put("x", "Float");
 		itemNamesAndTypes.put("y", "Float");
 		itemNamesAndTypes.put("z", "Float");
@@ -286,6 +290,9 @@ public class NpyWriter {
 			case "Double":
 				return Double.BYTES;
 
+			case "Datetime":
+				return Long.BYTES; // datetime64[ns] is represented as 64-bit integer
+
 			default:
 				throw new IllegalArgumentException("Unrecognized item type: " + type);
 
@@ -311,6 +318,9 @@ public class NpyWriter {
 
 			case "Double":
 				return NUMPY_BYTE_ORDER+"f8";
+
+			case "Datetime":
+				return NUMPY_BYTE_ORDER+"M8[ns]";
 
 			default:
 				throw new IllegalArgumentException("Unrecognized item type: " + type);
