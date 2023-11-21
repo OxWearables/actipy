@@ -66,9 +66,8 @@ setuptools.setup(
             "twine",
             "tomli",
             "pytest",
-            "joblib",
-            "memray"
-        ],
+            "joblib"
+        ] + (["memray"] if not sys.platform.startswith("win") else []),  # memray not supported on Windows
         "docs": [
             "sphinx>=4.2",
             "sphinx_rtd_theme>=1.0",
