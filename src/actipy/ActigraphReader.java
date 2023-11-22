@@ -1,5 +1,7 @@
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.IOException;
@@ -47,12 +49,6 @@ public class ActigraphReader {
     //     logger = Logger.getLogger(ActigraphParser.class.getName());
     // }
 
-
-    public static Map<String, String> read(String accFile, String outFile) {
-        return read(accFile, outFile, true);
-    }
-
-
     /**
      * Reads a .gt3x file
      * For v1, the .zip archive should contain least 3 files.
@@ -65,12 +61,32 @@ public class ActigraphReader {
      * the timestamp is saved in UNIX time format but it is local time.
      * TODO: confirm the DST change
      */
-    public static Map<String, String> read(
-        String accFile,
-        String outFile,
-        boolean verbose) {
+    public static void main(String[] args) {
 
-        Map<String, String> info = new HashMap<String, String>();
+        String accFile = null;
+        String outDir = null;
+        boolean verbose = false;
+
+        // Parse args string. Example:
+        // $ java ActigraphReader -i /path/to/inputFile.bin -o /path/to/outputDir -v
+        for (int i = 0; i < args.length; i++) {
+            if ("-i".equals(args[i]) && i < args.length - 1) {
+                accFile = args[++i];
+            } else if ("-o".equals(args[i]) && i < args.length - 1) {
+                outDir = args[++i];
+            } else if ("-v".equals(args[i])) {
+                verbose = true;
+            }
+        }
+
+        if (accFile == null) {
+            System.out.println("ERROR: No input file specified.");
+            System.exit(1);
+        }
+        if (outDir == null) {
+            System.out.println("ERROR: No output directory specified.");
+            System.exit(1);
+        }
 
         int statusOK = -1;
         double sampleRate = -1;
@@ -79,7 +95,9 @@ public class ActigraphReader {
         // readers for the 'activity.bin' & 'info.txt' files inside the .zip
         BufferedReader infoReader = null;
         InputStream activityReader = null;
-        NpyWriter writer = new NpyWriter(outFile, ITEM_NAMES_AND_TYPES);
+
+        String outData = outDir + File.separator + "data.npy";
+        NpyWriter writer = new NpyWriter(outData, ITEM_NAMES_AND_TYPES);
 
         try {
             zip = new ZipFile( new File(accFile), ZipFile.OPEN_READ);
@@ -180,11 +198,25 @@ public class ActigraphReader {
             }
         }
 
+        Map<String, String> info = new HashMap<String, String>();
         info.put("ReadOK", String.valueOf(statusOK));
         info.put("ReadErrors", String.valueOf(errCounter));
         info.put("SampleRate", String.valueOf(sampleRate));
 
-        return info;
+        // Write to info.txt file. Each line is a key:value pair.
+        String outInfo = outDir + File.separator + "info.txt";
+        try {
+            FileWriter file = new FileWriter(outInfo);
+            for (Map.Entry<String, String> entry : info.entrySet()) {
+                file.write(entry.getKey() + ":" + entry.getValue() + "\n");
+            }
+            file.flush();
+            file.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return;
 
     }
 
