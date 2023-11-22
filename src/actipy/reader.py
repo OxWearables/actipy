@@ -3,13 +3,12 @@ import time
 import struct
 import shutil
 import tempfile
-import atexit
 import zipfile
 import gzip
 import pathlib
 import numpy as np
 import pandas as pd
-import jpype
+import subprocess
 
 from actipy import processing as P
 
@@ -170,8 +169,6 @@ def _read_device(input_file, verbose=True):
 
         # Temporary diretory to store internal runtime files
         tmpdir = tempfile.mkdtemp()
-        # Temporary file to store parsed device data
-        tmpout = os.path.join(tmpdir, "tmpout.npy")
 
         info = {}
         info['Filename'] = input_file
@@ -188,7 +185,7 @@ def _read_device(input_file, verbose=True):
 
         # Parsing. Main action happens here.
         timer.start("Reading file...")
-        info_java = java_read_device(input_file, tmpout, verbose)
+        info_java = java_read_device(input_file, tmpdir, verbose)
         info.update(info_java)
         timer.stop()
 
@@ -197,7 +194,7 @@ def _read_device(input_file, verbose=True):
         # file as mmap, then we load each column using np.asarray (np.array uses
         # more memory - not sure why), and finally we convert to
         # pandas.DataFrame with copy=False to avoid re-copying.
-        data_mmap = np.load(tmpout, mmap_mode='r')
+        data_mmap = np.load(os.path.join(tmpdir, "data.npy"), mmap_mode='r')
         data = {c: np.asarray(data_mmap[c]) for c in data_mmap.dtype.names}
         data = pd.DataFrame(data, copy=False)
 
@@ -241,43 +238,42 @@ def _read_device(input_file, verbose=True):
             print("Error: %s - %s." % (e.filename, e.strerror))
 
 
-def java_read_device(input_file, output_file, verbose):
+def java_read_device(input_file, output_dir, verbose=True):
     """ Core function that calls the Java method to read device data """
 
-    setupJVM()
-
     if input_file.lower().endswith('.cwa'):
-        info = jpype.JClass('AxivityReader').read(input_file, output_file, verbose)
+        java_reader = 'AxivityReader'
 
     elif input_file.lower().endswith('.gt3x'):
-        info = jpype.JClass('ActigraphReader').read(input_file, output_file, verbose)
+        java_reader = 'ActigraphReader'
 
     elif input_file.lower().endswith('.bin'):
-        info = jpype.JClass('GENEActivReader').read(input_file, output_file, verbose)
+        java_reader = 'GENEActivReader'
 
     else:
         raise ValueError(f"Unknown file extension: {input_file}")
 
-    # Convert the Java HashMap object to Python dictionary
-    info = {str(k): str(info[k]) for k in info}
+    command = [
+        "java",
+        "-XX:ParallelGCThreads=1",
+        "-cp", pathlib.Path(__file__).parent,
+        java_reader,
+        "-i", input_file,
+        "-o", output_dir
+    ]
+    if verbose:
+        command.append("-v")
+    subprocess.run(command, check=True)
+
+    # Load info.txt file. Each line is a key:value pair.
+    with open(os.path.join(output_dir, "info.txt"), 'r') as f:
+        info = dict([line.split(':') for line in f.read().splitlines()])
+
     info['ReadOK'] = int(info['ReadOK'])
     info['ReadErrors'] = int(info['ReadErrors'])
     info['SampleRate'] = float(info['SampleRate'])
 
     return info
-
-
-def setupJVM():
-    """ Start JVM. Shutdown at program exit """
-    if not jpype.isJVMStarted():
-        jpype.addClassPath(pathlib.Path(__file__).parent)
-        jpype.startJVM(convertStrings=False)
-
-        @atexit.register
-        def shudownJVM():
-            jpype.shutdownJVM()
-
-    return
 
 
 def decompr(input_file, target_dir):
