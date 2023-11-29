@@ -187,7 +187,7 @@ def detect_nonwear(data, patience='90m', window='10s', stdtol=15 / 1000):
 
     info = {}
 
-    stationary_indicator = (  # this is more memory friendly than of data[['x', 'y', 'z']].std()
+    stationary_indicator = (  # this is more memory friendly than data[['x', 'y', 'z']].std()
         data['x'].resample(window, origin='start').std().lt(stdtol)
         & data['y'].resample(window, origin='start').std().lt(stdtol)
         & data['z'].resample(window, origin='start').std().lt(stdtol)
@@ -206,6 +206,10 @@ def detect_nonwear(data, patience='90m', window='10s', stdtol=15 / 1000):
         )
         .set_index('start_time')
         .squeeze()
+        # dtype defaults to int64 when series is empty, so
+        # astype('timedelta64[ns]') makes sure it's always a timedelta,
+        # otherwise comparison with Timedelta(patience) below will fail
+        .astype('timedelta64[ns]')
     )
     nonwear_segment_lengths = stationary_segment_lengths[stationary_segment_lengths > pd.Timedelta(patience)]
 
