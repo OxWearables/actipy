@@ -205,7 +205,7 @@ def detect_nonwear(data, patience='90m', window='10s', stdtol=15 / 1000):
             length=lambda x: x.index[-1] - x.index[0]
         )
         .set_index('start_time')
-        .squeeze()
+        .squeeze(axis=1)
         # dtype defaults to int64 when series is empty, so
         # astype('timedelta64[ns]') makes sure it's always a timedelta,
         # otherwise comparison with Timedelta(patience) below will fail
