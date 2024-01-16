@@ -21,7 +21,7 @@ def resample(data, sample_rate, dropna=False, chunksize=1_000_000):
     :type sample_rate: int or float
     :param dropna: Whether to drop NaN values after resampling. Defaults to False.
     :type dropna: bool, optional
-    :param chunksize: Chunk size. Defaults to 1_000_000.
+    :param chunksize: Chunk size for chunked processing. Defaults to 1_000_000 rows.
     :type chunksize: int, optional
     :return: Processed data and processing info.
     :rtype: (pandas.DataFrame, dict)
@@ -99,7 +99,7 @@ def lowpass(data, data_sample_rate, cutoff_rate=20, chunksize=1_000_000):
     :type data_sample_rate: int or float
     :param cutoff_rate: Cutoff (Hz) for low-pass filter. Defaults to 20.
     :type cutoff_rate: int, optional
-    :param chunksize: Chunk size. Defaults to 1_000_000.
+    :param chunksize: Chunk size for chunked processing. Defaults to 1_000_000 rows.
     :type chunksize: int, optional
     :return: Processed data and processing info.
     :rtype: (pandas.DataFrame, dict)
@@ -169,18 +169,14 @@ def detect_nonwear(data, patience='90m', window='10s', stdtol=15 / 1000):
     """
     Detect nonwear episodes based on long periods of no movement.
 
-    :param data: A pandas.DataFrame of acceleration time-series. The index must be a DateTimeIndex.
+    :param pandas.DataFrame data: A pandas.DataFrame of acceleration time-series. The index must be a DateTimeIndex.
     :type data: pandas.DataFrame.
-    :param patience: Minimum length of the stationary period to be flagged as
-        non-wear. Defaults to 90 minutes ("90m").
+    :param patience: Minimum length of the stationary period to be flagged as non-wear. Defaults to 90 minutes ("90m").
     :type patience: str, optional
-    :param stationary_indicator: A boolean pandas.Series indexed as `data`
-        indicating stationary (low movement) periods. If None, it will be
-        automatically inferred. Defaults to None.
-    :type stationary_indicator: pandas.Series, optional
-    :param drop: Wheter to drop the non-wear periods. If False, the non-wear
-        periods will be filled with NaNs. Defaults to False.
-    :type drop: bool, optional
+    :param window: Rolling window to use to check for stationary periods. Defaults to 10 seconds ("10s").
+    :type window: str, optional
+    :param stdtol: Standard deviation under which the window is considered stationary. Defaults to 15 milligravity (0.015).
+    :type stdtol: float, optional
     :return: Processed data and processing info.
     :rtype: (pandas.DataFrame, dict)
     """
@@ -244,11 +240,11 @@ def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, window='10s', 
     :type calib_cube: float, optional.
     :param calib_min_samples: Minimum number of stationary samples required to run calibration. Defaults to 50.
     :type calib_min_samples: int, optional.
-    :param stationary_indicator: A boolean pandas.Series indexed as `data`
-        indicating stationary (low movement) periods. If None, it will be
-        automatically inferred. Defaults to None.
-    :type stationary_indicator: pandas.Series, optional
-    :param chunksize: Chunk size. Defaults to 1_000_000.
+    :param window: Rolling window to use to check for stationary periods. Defaults to 10 seconds ("10s").
+    :type window: str, optional
+    :param stdtol: Standard deviation under which the window is considered stationary. Defaults to 15 milligravity (0.015).
+    :type stdtol: float, optional
+    :param chunksize: Chunk size for chunked processing. Defaults to 1_000_000 rows.
     :type chunksize: int, optional
     :return: Processed data and processing info.
     :rtype: (pandas.DataFrame, dict)
