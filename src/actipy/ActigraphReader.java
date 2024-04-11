@@ -437,7 +437,6 @@ public class ActigraphReader {
                     double y = twoSamples[4-twoSampleCounter*3];
                     double z = twoSamples[5-twoSampleCounter*3];
                     // double temp = 1.0d; // don't know temp yet
-                    t = getTrueUnixTime(t, infoTimeShift);
 
                     try {
                         writer.write(toItems(TimeUnit.MILLISECONDS.toNanos(t), x, y, z));
@@ -512,13 +511,13 @@ public class ActigraphReader {
                 // logger.log(Level.FINER, "x y z: " + sample[1] + " " + sample[0] + " " + sample[2]);
 
                 // double temp = 1.0d; // don't know temp yet
-                samples += 1;
                 long myTime = Math.round((1000d*samples)/sampleRate) + firstSampleTime*1000; // in Miliseconds
-                myTime = getTrueUnixTime(myTime, infoTimeShift);
+                samples += 1;
+
 
                 // Yes, sample[1] and sample[0] are swapped. Not the case elsewhere.
                 try {
-                    writer.write(toItems(myTime, sample[1], sample[0], sample[2]));
+                    writer.write(toItems(TimeUnit.MILLISECONDS.toNanos(myTime), sample[1], sample[0], sample[2]));
                 } catch (Exception e) {
                     System.err.println("Line write error: " + e.toString());
                 }
@@ -586,16 +585,14 @@ public class ActigraphReader {
                 }
 
                 // double temp = 1.0d; // don't know temp yet
-                samples += 1;
-
                 long myTime = Math.round((1000d*samples)/sampleRate) + firstSampleTime*1000; // in Miliseconds
-                myTime = getTrueUnixTime(myTime, infoTimeShift);
+                samples += 1;
 
                 // logger.log(Level.FINER, "i: " + i + "\nx y z: " + sample[0] + " " + sample[1] + " " + sample[2] +
                 //         "\nTime:" + myTime);
 
                 try {
-                    writer.write(toItems(myTime, sample[0], sample[1], sample[2]));
+                    writer.write(toItems(TimeUnit.MILLISECONDS.toNanos(myTime), sample[0], sample[1], sample[2]));
                 } catch (Exception e) {
                     System.err.println("Line write error: " + e.toString());
                 }
