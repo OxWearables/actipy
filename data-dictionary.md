@@ -1,0 +1,21 @@
+## Data Dictionary
+
+- **Filename**: The name of the data file.
+- **Filesize(MB)**: The size of the file in megabytes.
+- **Device**: The brand or model of the device that recorded the data, or the file extension.
+- **DeviceID**: A unique identifier for the specific device used.
+- **ReadErrors**: Number of errors encountered while reading data from the device.
+- **SampleRate**: The frequency at which data points are sampled per second, measured in Hz.
+- **ReadOK**: A binary indicator (1 for success, 0 for failure) showing whether the data was read successfully.
+- **NumTicks**: Total number of data points recorded.
+- **StartTime**: Timestamp marking the beginning of the data recording.
+- **EndTime**: Timestamp marking the end of the data recording.
+- **WearTime(days)**: Total time the device was worn, expressed in days.
+- **NumInterrupts**: Number of interruptions in the data recording.
+- **CalibErrorBefore(mg)**: Calibration error before any correction was applied, measured in milli-g.
+- **CalibOK**: A binary indicator (1 for successful calibration, 0 for unsuccessful) showing the calibration status.
+- **CalibErrorAfter(mg)**: Calibration error after attempting correction, measured in milli-g.
+- **NonwearTime(days)**: Total time the device was not worn, expressed in days.
+- **NumNonwearEpisodes**: Number of separate episodes when the device was not worn.
+- **ResampleRate**: The new sampling rate after data has been resampled.
+- **NumTicksAfterResample**: Number of data points after resampling.

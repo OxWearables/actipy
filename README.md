@@ -83,6 +83,7 @@ info [dict]
  ...
 
 ```
+Refer to the [Data Dictionary](data-dictionary.md) for a comprehensive list of outputs.
 
 If you have a CSV file that you want to process, you can also use the data processing routines from `actipy.processing`:
 
