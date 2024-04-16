@@ -12,6 +12,8 @@
 - **EndTime**: Timestamp marking the end of the data recording.
 - **WearTime(days)**: Total time the device was worn, expressed in days.
 - **NumInterrupts**: Number of interruptions in the data recording.
+- **LowpassOK**: A binary indicator (1 for success, 0 for failure) showing whether the lowpass filter was applied successfully.
+- **LowpassCutoff(Hz)**: The cutoff frequency in Hertz for the lowpass filter.
 - **CalibErrorBefore(mg)**: Calibration error before any correction was applied, measured in milli-g.
 - **CalibOK**: A binary indicator (1 for successful calibration, 0 for unsuccessful) showing the calibration status.
 - **CalibErrorAfter(mg)**: Calibration error after attempting correction, measured in milli-g.
