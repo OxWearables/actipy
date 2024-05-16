@@ -98,5 +98,9 @@ data, info_resample = P.resample(data, sample_rate)
 
 See the [documentation](https://actipy.readthedocs.io/en/latest/) for more.
 
+## Contributing
+If you would like to contribute to this repository, please check out [CONTRIBUTING.md](https://github.com/OxWearables/actipy/blob/main/CONTRIBUTING.md).
+We welcome contributions in the form of bug reports, feature requests, and pull requests. 
+
 ## License
 See [LICENSE.md](LICENSE.md).
