@@ -315,9 +315,15 @@ def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, window='10s', 
 
     # Check that we have sufficiently uniformly distributed points:
     # need at least one point outside each face of the cube
-    if (np.max(xyz, axis=0) < calib_cube).any() \
-            or (np.min(xyz, axis=0) > -calib_cube).any():
+    if (np.max(xyz, axis=0) < calib_cube).any() or (np.min(xyz, axis=0) > -calib_cube).any():
         info['CalibOK'] = 0
+        info['CalibErrorAfter(mg)'] = init_err * 1000
+
+        return data, info
+
+    # If initial error is already below threshold, skip and return
+    if init_err < ERR_TOL:
+        info['CalibOK'] = 1
         info['CalibErrorAfter(mg)'] = init_err * 1000
 
         return data, info
