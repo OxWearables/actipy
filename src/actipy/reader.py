@@ -61,6 +61,10 @@ def read_device(input_file,
 
     sample_rate = info['SampleRate']
 
+    if len(data) == 0:
+        print("File is empty. No data to process.")
+        return data, info
+
     if lowpass_hz not in (None, False):
         timer.start("Lowpass filter...")
         data, info_lowpass = P.lowpass(data, sample_rate, lowpass_hz)
@@ -197,6 +201,16 @@ def _read_device(input_file, verbose=True):
         data_mmap = np.load(os.path.join(tmpdir, "data.npy"), mmap_mode='r')
         data = {c: np.asarray(data_mmap[c]) for c in data_mmap.dtype.names}
         data = pd.DataFrame(data, copy=False)
+
+        if len(data) == 0:
+            info['NumTicks'] = 0
+            info['StartTime'] = None
+            info['EndTime'] = None
+            info['WearTime(days)'] = 0
+            info['NumInterrupts'] = 0
+            data.set_index('time', inplace=True)
+            timer.stop()
+            return data, info
 
         # Check for non-increasing timestamps. This is rare but can happen with
         # buggy devices. TODO: Parser should do this.
