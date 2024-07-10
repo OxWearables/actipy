@@ -375,7 +375,7 @@ def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, window='10s', 
 
     info['CalibErrorAfter(mg)'] = best_err * 1000
 
-    if (best_err > ERR_TOL) or (it + 1 == MAXITER):
+    if (best_err >= ERR_TOL) or (it + 1 >= MAXITER):
         info['CalibOK'] = 0
 
         return data, info
