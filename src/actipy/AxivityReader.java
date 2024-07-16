@@ -23,7 +23,8 @@ public class AxivityReader {
     private static final int BLOCKSIZE = 512;
 
     // Specification of items to be written
-    private static final Map<String, String> ITEM_NAMES_AND_TYPES;
+    private static final Map<String, String> ITEM_NAMES_AND_TYPES_AX3;
+    private static final Map<String, String> ITEM_NAMES_AND_TYPES_AX6;
     static{
         Map<String, String> itemNamesAndTypes = new LinkedHashMap<String, String>();
         itemNamesAndTypes.put("time", "Datetime");
@@ -32,7 +33,20 @@ public class AxivityReader {
         itemNamesAndTypes.put("z", "Float");
         itemNamesAndTypes.put("temperature", "Float");
         itemNamesAndTypes.put("light", "Float");
-        ITEM_NAMES_AND_TYPES = Collections.unmodifiableMap(itemNamesAndTypes);
+        ITEM_NAMES_AND_TYPES_AX3 = Collections.unmodifiableMap(itemNamesAndTypes);
+    }
+    static{
+        Map<String, String> itemNamesAndTypes = new LinkedHashMap<String, String>();
+        itemNamesAndTypes.put("time", "Datetime");
+        itemNamesAndTypes.put("x", "Float");
+        itemNamesAndTypes.put("y", "Float");
+        itemNamesAndTypes.put("z", "Float");
+        itemNamesAndTypes.put("gyro_x", "Float");
+        itemNamesAndTypes.put("gyro_y", "Float");
+        itemNamesAndTypes.put("gyro_z", "Float");
+        itemNamesAndTypes.put("temperature", "Float");
+        itemNamesAndTypes.put("light", "Float");
+        ITEM_NAMES_AND_TYPES_AX6 = Collections.unmodifiableMap(itemNamesAndTypes);
     }
 
     public static void main(String[] args) {
@@ -63,8 +77,11 @@ public class AxivityReader {
             System.exit(1);
         }
 
+        boolean hasGyro = detectGyro(accFile);
+        Map<String, String> item_names_and_types = hasGyro ? ITEM_NAMES_AND_TYPES_AX6 : ITEM_NAMES_AND_TYPES_AX3;
+
         String outData = outDir + File.separator + "data.npy";
-        NpyWriter writer = new NpyWriter(outData, ITEM_NAMES_AND_TYPES);
+        NpyWriter writer = new NpyWriter(outData, item_names_and_types);
 
         BlockParser blockParser = new BlockParser(writer);
 
@@ -128,6 +145,33 @@ public class AxivityReader {
     }
 
 
+    // Check if the accFile has a gyroscope columns
+    private static boolean detectGyro(String accFile) {
+        boolean hasGyro = false;
+        try (FileInputStream accStream = new FileInputStream(accFile);
+             FileChannel accChannel = accStream.getChannel()) {
+
+            ByteBuffer block = ByteBuffer.allocate(BLOCKSIZE);
+            while (accChannel.read(block) != -1) {
+                block.flip();
+                block.order(ByteOrder.LITTLE_ENDIAN);
+                String header = "" + (char) block.get() + (char) block.get();
+                if (header.equals("AX")) {
+                    int numAxesBPS = block.get(25) & 0xff;
+                    hasGyro = ((numAxesBPS >> 4) & 0x0f) >= 6;
+                    break;
+                }
+                block.clear();
+            }
+        } catch (IOException e) {
+            System.err.println("ERROR: Failed to read the file header.");
+            e.printStackTrace();
+            System.exit(1);
+        }
+        return hasGyro;
+    }
+
+
     private static class BlockParser {
 
         float sampleRate = -1;
@@ -177,6 +221,18 @@ public class AxivityReader {
                     float offsetStart = 0;
                     float freq = 0;
                     short checkSum = 0;
+                    int numAxes = 0;
+		            int accelAxis = -1;
+                    int gyroAxis = -1;
+					int accelUnit = 256;	// default 1g = 256
+					int gyroRange = 2000;	// default 32768 = 2000dps
+                    int rawLight = getUnsignedShort(block, 18);
+
+                    accelUnit = 1 << (8 + ((rawLight >>> 13) & 0x07));
+					if (((rawLight >> 10) & 0x07) != 0) {
+						gyroRange = 8000 / (1 << ((rawLight >>> 10) & 0x07));
+					}
+                    float gyroUnit = (gyroRange != 0) ? (32768.0f / gyroRange) : 0;
 
                     // Figure out sample rate (freq)
                     if (rateCode == 0) {
@@ -211,13 +267,30 @@ public class AxivityReader {
                     lastBlockTime = blockEndTime;
 
                     // calculate num bytes per sample...
-                    byte bytesPerSample = 4;
+					int bytesPerSample = 0;
+					numAxes = (numAxesBPS >> 4) & 0x0f;
+
+					if ((numAxesBPS & 0x0f) == 2) {
+                        bytesPerSample = 2 * numAxes;       // 3*16-bit
+                    } else if ((numAxesBPS & 0x0f) == 0) {
+                        bytesPerSample = 4;                 // 3*10-bit + 2
+                    }
+					short expectedCount = (short)((bytesPerSample != 0) ? 480 / bytesPerSample : 0);
+
                     int NUM_AXES_PER_SAMPLE = 3;
                     if ((numAxesBPS & 0x0f) == 2) {
                         bytesPerSample = 6; // 3*16-bit
                     } else if ((numAxesBPS & 0x0f) == 0) {
                         bytesPerSample = 4; // 3*10-bit + 2
                     }
+
+                    numAxes = (numAxesBPS >> 4) & 0x0f;
+					if (numAxes >= 6) {
+						gyroAxis = 0;
+						accelAxis = 3;
+					} else if (numAxes >= 3) {
+						accelAxis = 0;
+					}
 
                     // Limit values
                     int maxSamples = 480 / bytesPerSample; //80 or 120 samples/block
@@ -228,37 +301,46 @@ public class AxivityReader {
 
                     // raw reading values
                     double t = 0;
-                    long value = 0; // x/y/z vals
-                    float x = 0.0f;
-                    float y = 0.0f;
-                    float z = 0.0f;
+					short[] sampleValues = new short[sampleCount * numAxes];
 
                     for (int i = 0; i < sampleCount; i++) {
-
-                        if (bytesPerSample == 4) {
-                            value = getUnsignedInt(block, 30 + 4 * i);
-                            // Sign-extend 10-bit values, adjust for exponents
-                            x = (float) ((short) (0xffffffc0 & (value << 6)) >> (6 - ((value >> 30) & 0x03)));
-                            y = (float) ((short) (0xffffffc0 & (value >> 4)) >> (6 - ((value >> 30) & 0x03)));
-                            z = (float) ((short) (0xffffffc0 & (value >> 14)) >> (6 - ((value >> 30) & 0x03)));
-                        } else if (bytesPerSample == 6) {
-                            x = (float) block.getShort(30 + 2 * NUM_AXES_PER_SAMPLE * i + 0);
-                            y = (float) block.getShort(30 + 2 * NUM_AXES_PER_SAMPLE * i + 2);
-                            z = (float) block.getShort(30 + 2 * NUM_AXES_PER_SAMPLE * i + 4);
-                        } else {
-                            x = 0;
-                            y = 0;
-                            z = 0;
+					    if (bytesPerSample == 4) {
+                            long value = getUnsignedInt(block, 30 + 4 * i);
+					    	sampleValues[i * numAxes + 0] = (short)((short)(0xffffffc0 & (value <<  6)) >> (6 - ((value >> 30) & 0x03)));	// Sign-extend 10-bit value, adjust for exponent
+					    	sampleValues[i * numAxes + 1] = (short)((short)(0xffffffc0 & (value >>  4)) >> (6 - ((value >> 30) & 0x03)));	// Sign-extend 10-bit value, adjust for exponent
+					    	sampleValues[i * numAxes + 2] = (short)((short)(0xffffffc0 & (value >> 14)) >> (6 - ((value >> 30) & 0x03)));	// Sign-extend 10-bit value, adjust for exponent
+					    } else if (bytesPerSample >= 0) {
+					    	for (int j = 0; j < numAxes; j++) {
+					    		sampleValues[i * numAxes + j] = block.getShort(30 + (2 * numAxes * i) + (2 * j));
+					    	}
+					    } else {
+					    	for (int j = 0; j < numAxes; j++) {
+					    		sampleValues[i * numAxes + j] = 0;
+                            }
                         }
-
-                        x /= 256;  // to gravity
-                        y /= 256;
-                        z /= 256;
 
                         t = blockStartTime + (double)i * (blockEndTime - blockStartTime) / sampleCount;
                         t *= 1000;  // secs to millis
 
-                        writer.write(toItems(TimeUnit.MILLISECONDS.toNanos((long) t), x, y, z, temperature, light));
+                        float ax = 0, ay = 0, az = 0;
+			            if (accelAxis >= 0) {
+			            	ax = (float)sampleValues[numAxes * i + accelAxis + 0] / accelUnit;
+			            	ay = (float)sampleValues[numAxes * i + accelAxis + 1] / accelUnit;
+			            	az = (float)sampleValues[numAxes * i + accelAxis + 2] / accelUnit;
+			            }
+
+			            float gx = 0, gy = 0, gz = 0;
+			            if (gyroAxis >= 0) {
+			            	gx = (float)sampleValues[numAxes * i + gyroAxis + 0] / gyroUnit;
+			            	gy = (float)sampleValues[numAxes * i + gyroAxis + 1] / gyroUnit;
+			            	gz = (float)sampleValues[numAxes * i + gyroAxis + 2] / gyroUnit;
+			            }
+
+                        if (gyroAxis >= 0) {
+                            writer.write(toItems(TimeUnit.MILLISECONDS.toNanos((long) t), ax, ay, az, gx, gy, gz, temperature, light));
+                        } else {
+                            writer.write(toItems(TimeUnit.MILLISECONDS.toNanos((long) t), ax, ay, az, temperature, light));
+                        }
 
                     }
 
@@ -313,7 +395,9 @@ public class AxivityReader {
     }
 
 
-    private static Map<String, Object> toItems(long t, float x, float y, float z, float temperature, float light) {
+    private static Map<String, Object> toItems(
+            long t, float x, float y, float z,
+            float temperature, float light) {
         Map<String, Object> items = new HashMap<String, Object>();
         items.put("time", t);
         items.put("x", x);
@@ -325,9 +409,41 @@ public class AxivityReader {
     }
 
 
-    private static Map<String, Object> toItems(long t, double x, double y, double z, double temperature, float light) {
-        return toItems(t, (float) x, (float) y, (float) z, (float) temperature, (float) light);
+    private static Map<String, Object> toItems(
+            long t, float x, float y, float z,
+            float gyro_x, float gyro_y, float gyro_z,
+            float temperature, float light) {
+        Map<String, Object> items = new HashMap<String, Object>();
+        items.put("time", t);
+        items.put("x", x);
+        items.put("y", y);
+        items.put("z", z);
+        items.put("gyro_x", gyro_x);
+        items.put("gyro_y", gyro_y);
+        items.put("gyro_z", gyro_z);
+        items.put("temperature", temperature);
+        items.put("light", light);
+        return items;
     }
 
+
+    private static Map<String, Object> toItems(
+            long t, double x, double y, double z,
+            double temperature, float light) {
+        return toItems(
+                t, (float) x, (float) y, (float) z,
+                (float) temperature, (float) light);
+    }
+
+
+    private static Map<String, Object> toItems(
+            long t, double x, double y, double z,
+            double gyro_x, double gyro_y, double gyro_z,
+            double temperature, float light) {
+        return toItems(
+                t, (float) x, (float) y, (float) z,
+                (float) gyro_x, (float) gyro_y, (float) gyro_z,
+                (float) temperature, (float) light);
+    }
 
 }
