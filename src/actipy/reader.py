@@ -73,7 +73,7 @@ def read_device(input_file,
 
     if calibrate_gravity:
         timer.start("Gravity calibration...")
-        data, info_calib = P.calibrate_gravity(data)
+        data, info_calib = P.calibrate_gravity(data, return_coeffs=False)
         info.update(info_calib)
         timer.stop()
 
