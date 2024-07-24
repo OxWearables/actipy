@@ -35,11 +35,10 @@ $ conda install -c oxwear actipy
 
 ## Usage
 
-Process an Axivity3 (.cwa) file:
 ```python
 import actipy
 
-data, info = actipy.read_device("sample.cwa.gz",
+data, info = actipy.read_device("sample.cwa.gz",  # or "sample.gt3x.gz" or "sample.bin.gz"
                                  lowpass_hz=20,
                                  calibrate_gravity=True,
                                  detect_nonwear=True,
@@ -85,7 +84,8 @@ info [dict]
 ```
 Refer to the [Data Dictionary](data-dictionary.md) for a comprehensive list of outputs.
 
-If you have a CSV file that you want to process, you can also use the data processing routines from `actipy.processing`:
+### Processing a custom CSV file
+You can also use the routines in `actipy.processing` to process custom CSV files, or for more fine-grained control:
 
 ```python
 import actipy.processing as P
@@ -97,6 +97,17 @@ data, info_resample = P.resample(data, sample_rate)
 ```
 
 See the [documentation](https://actipy.readthedocs.io/en/latest/) for more.
+
+### Processing from the command line
+We also provide a command-line tool to process a device file (currently, only AX3 and AX6 are supported) and output to CSV:
+```bash
+$ read_cwa sample.cwa.gz -o outputs --lowpass-hz 20 --resample-hz 50 --calibrate-gravity --detect-nonwear
+```
+
+Outputs:
+  - "outputs/sample/sample.csv.gz"
+  - "outputs/sample/sample-Info.json"
+
 
 ## Contributing
 If you would like to contribute to this repository, please check out [CONTRIBUTING.md](https://github.com/OxWearables/actipy/blob/main/CONTRIBUTING.md).
