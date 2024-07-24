@@ -229,7 +229,7 @@ def detect_nonwear(data, patience='90m', window='10s', stdtol=15 / 1000):
     return data, info
 
 
-def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, window='10s', stdtol=15 / 1000, chunksize=1_000_000):  # noqa: C901
+def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, window='10s', stdtol=15 / 1000, return_coeffs=True, chunksize=1_000_000):  # noqa: C901
     """
     Gravity calibration method of van Hees et al. 2014 (https://pubmed.ncbi.nlm.nih.gov/25103964/)
 
@@ -283,10 +283,12 @@ def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, window='10s', 
     del stationary_indicator
     del nonzero
 
+    info['CalibNumSamples'] = len(xyz)
+
     if len(xyz) < calib_min_samples:
-        info['CalibOK'] = 0
         info['CalibErrorBefore(mg)'] = np.nan
         info['CalibErrorAfter(mg)'] = np.nan
+        info['CalibOK'] = 0
         warnings.warn(f"Skipping calibration: Insufficient stationary samples: {len(xyz)} < {calib_min_samples}")
         return data, info
 
@@ -316,15 +318,17 @@ def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, window='10s', 
     # Check that we have sufficiently uniformly distributed points:
     # need at least one point outside each face of the cube
     if (np.max(xyz, axis=0) < calib_cube).any() or (np.min(xyz, axis=0) > -calib_cube).any():
-        info['CalibOK'] = 0
         info['CalibErrorAfter(mg)'] = init_err * 1000
+        info['CalibNumIters'] = 0
+        info['CalibOK'] = 0
 
         return data, info
 
     # If initial error is already below threshold, skip and return
     if init_err < ERR_TOL:
-        info['CalibOK'] = 1
         info['CalibErrorAfter(mg)'] = init_err * 1000
+        info['CalibNumIters'] = 0
+        info['CalibOK'] = 1
 
         return data, info
 
@@ -374,6 +378,7 @@ def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, window='10s', 
             break
 
     info['CalibErrorAfter(mg)'] = best_err * 1000
+    info['CalibNumIters'] = it + 1
 
     if (best_err >= ERR_TOL) or (it + 1 >= MAXITER):
         info['CalibOK'] = 0
@@ -427,18 +432,18 @@ def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, window='10s', 
             del data_mmap
 
         info['CalibOK'] = 1
-        info['CalibNumIters'] = it + 1
-        info['CalibNumSamples'] = len(xyz)
-        info['CalibxIntercept'] = best_intercept[0]
-        info['CalibyIntercept'] = best_intercept[1]
-        info['CalibzIntercept'] = best_intercept[2]
-        info['CalibxSlope'] = best_slope[0]
-        info['CalibySlope'] = best_slope[1]
-        info['CalibzSlope'] = best_slope[2]
-        if hasT:
-            info['CalibxSlopeT'] = best_slopeT[0]
-            info['CalibySlopeT'] = best_slopeT[1]
-            info['CalibzSlopeT'] = best_slopeT[2]
+
+        if return_coeffs:
+            info['CalibxIntercept'] = best_intercept[0]
+            info['CalibyIntercept'] = best_intercept[1]
+            info['CalibzIntercept'] = best_intercept[2]
+            info['CalibxSlope'] = best_slope[0]
+            info['CalibySlope'] = best_slope[1]
+            info['CalibzSlope'] = best_slope[2]
+            if hasT:
+                info['CalibxSlopeT'] = best_slopeT[0]
+                info['CalibySlopeT'] = best_slopeT[1]
+                info['CalibzSlopeT'] = best_slopeT[2]
 
     return data, info
 
