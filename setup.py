@@ -55,6 +55,7 @@ setuptools.setup(
         "scipy>=1.7",
         "pandas>=1.3",
         "statsmodels>=0.13",
+        # "tqdm==4.64.*",
     ],
     extras_require={
         "dev": [
@@ -72,6 +73,11 @@ setuptools.setup(
             "sphinx_rtd_theme>=1.0",
             "readthedocs-sphinx-search>=0.1",
             "docutils<0.18",
+        ],
+    },
+    entry_points={
+        "console_scripts": [
+            "read_cwa=actipy.read_cwa:main",
         ]
     }
 )
