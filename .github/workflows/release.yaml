@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   build-n-publish:
-    if: github.event.base_ref == 'refs/heads/main' || github.event.base_ref == 'refs/heads/master'
     name: Publish to PyPI
     runs-on: ubuntu-latest
 
@@ -24,6 +23,21 @@ jobs:
           # A shallow clone can work when the following issue is resolved:
           # https://github.com/actions/checkout/issues/338
           fetch-depth: 0
+    
+      - name: Check branch for tag
+        run: |
+          BRANCH_NAME=$(git branch --contains ${{ github.ref }} | grep -E 'main|master' | xargs)
+          if [[ -z "$BRANCH_NAME" ]]; then
+            echo "##[error]Tag is not in main or master branch."
+            exit 1
+          fi
+
+      - name: Fetch the latest tag
+        run: |
+          git fetch --depth=1 origin +refs/tags/*:refs/tags/* 
+          LATEST_TAG=$(git describe --tags `git rev-list --tags --max-count=1`)
+          echo "Latest tag is $LATEST_TAG"
+          git checkout $LATEST_TAG
 
       - name: Setup Java
         uses: actions/setup-java@v4
