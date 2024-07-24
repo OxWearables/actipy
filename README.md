@@ -2,7 +2,7 @@
 
 A Python package to process accelerometer data.
 
-Axivity3 (`.cwa`), Actigraph (`.gt3x`), and GENEActiv (`.bin`) files are supported,
+Axivity3 and Axivity6 (`.cwa`), Actigraph (`.gt3x`), and GENEActiv (`.bin`) files are supported,
 as well as custom CSV files.
 
 Axivity3 is the activity tracker watch used in the large-scale
@@ -49,14 +49,14 @@ data, info = actipy.read_device("sample.cwa.gz",
 Output:
 ```console
 data [pandas.DataFrame]
-                                 x         y         z  temperature
+                                 x         y         z  temperature      light
  time
- 2014-05-07 13:29:50.430 -0.513936  0.070043  1.671264    20.000000
- 2014-05-07 13:29:50.440 -0.233910 -0.586894  0.081946    20.000000
- 2014-05-07 13:29:50.450 -0.080303 -0.951132 -0.810433    20.000000
- 2014-05-07 13:29:50.460 -0.067221 -0.976200 -0.864934    20.000000
- 2014-05-07 13:29:50.470 -0.109617 -0.857322 -0.508587    20.000000
- ...                           ...       ...       ...          ...
+ 2014-05-07 13:29:50.430 -0.513990  0.070390  1.671922    20.000000  78.420235
+ 2014-05-07 13:29:50.440 -0.233940 -0.586568  0.082067    20.000000  78.420235
+ 2014-05-07 13:29:50.450 -0.080319 -0.950817 -0.810613    20.000000  78.420235
+ 2014-05-07 13:29:50.460 -0.067236 -0.975886 -0.865132    20.000000  78.420235
+ 2014-05-07 13:29:50.470 -0.109636 -0.857004 -0.508666    20.000000  78.420235
+ ...                           ...       ...       ...          ...        ...
 
 info [dict]
  Filename                 : data/sample.cwa.gz
