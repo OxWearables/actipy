@@ -91,7 +91,7 @@ def read_device(input_file,
             data, info_resample = P.resample(data, resample_hz)
         info.update(info_resample)
         timer.stop()
-        
+
     info_wear_coverage = calculate_wear_coverage(data)
     info.update(info_wear_coverage)
 
@@ -411,13 +411,13 @@ def fix_nonincr_time(data):
 def calculate_wear_coverage(data):
     """ Check device wear covers all 24 hours of the day """
     info = {}
-    coverage = data.groupby(data.index.hour).agg(lambda x: x.notna().mean())
-    
+    coverage = data.notna().any(axis=1).groupby(data.index.hour).agg(lambda x: x.notna().mean())
+
     if len(coverage) < 24 or np.min(coverage) < 0.01:
         info['Covers24hOK'] = 0
     else:
         info['Covers24hOK'] = 1
-    
+
     return info
 
 
