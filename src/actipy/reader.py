@@ -180,7 +180,7 @@ def qc(data, sample_rate):
         info['WearTime(days)'] = 0
         info['NumInterrupts'] = 0
         info['ReadErrors'] = 0
-        return info
+        return data, info
 
     # Start/end times, wear time, interrupts
     tol = pd.Timedelta('1s')
