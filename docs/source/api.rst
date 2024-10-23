@@ -9,8 +9,8 @@ API reference
 
 .. autofunction:: actipy.processing.calibrate_gravity
 
-.. autofunction:: actipy.processing.detect_nonwear
+.. autofunction:: actipy.processing.flag_nonwear
+
+.. autofunction:: actipy.processing.find_nonwear_segments
 
 .. autofunction:: actipy.processing.resample
-
-.. autofunction:: actipy.processing.get_stationary_indicator
