@@ -7,7 +7,7 @@ import statsmodels.api as sm
 import warnings
 
 
-__all__ = ['lowpass', 'calibrate_gravity', 'flag_nonwear', 'resample', 'get_stationary_indicator', 'find_nonwear_segments']
+__all__ = ['lowpass', 'calibrate_gravity', 'flag_nonwear', 'find_nonwear_segments', 'resample']
 
 
 def resample(data, sample_rate, dropna=False, chunksize=1_000_000):
@@ -424,41 +424,41 @@ def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, window='10s', 
     return data, info
 
 
-def get_stationary_indicator(data, window='10s', stdtol=15 / 1000):
-    """
-    Return a boolean pandas.Series indicating stationary (low movement) periods.
+# def get_stationary_indicator(data, window='10s', stdtol=15 / 1000):
+#     """
+#     Return a boolean pandas.Series indicating stationary (low movement) periods.
 
-    :param data: A pandas.DataFrame of acceleration time-series. It must contain
-        at least columns `x,y,z` and the index must be a DateTimeIndex.
-    :type data: pandas.DataFrame.
-    :param window: Rolling window to use to check for stationary periods. Defaults to 10 seconds ("10s").
-    :type window: str, optional
-    :param stdtol: Standard deviation under which the window is considered stationary.
-        Defaults to 15 milligravity (0.015).
-    :type stdtol: float, optional
-    :return: Boolean pandas.Series indexed as `data` indicating stationary periods.
-    :rtype: pandas.Series
-    """
+#     :param data: A pandas.DataFrame of acceleration time-series. It must contain
+#         at least columns `x,y,z` and the index must be a DateTimeIndex.
+#     :type data: pandas.DataFrame.
+#     :param window: Rolling window to use to check for stationary periods. Defaults to 10 seconds ("10s").
+#     :type window: str, optional
+#     :param stdtol: Standard deviation under which the window is considered stationary.
+#         Defaults to 15 milligravity (0.015).
+#     :type stdtol: float, optional
+#     :return: Boolean pandas.Series indexed as `data` indicating stationary periods.
+#     :rtype: pandas.Series
+#     """
 
-    def fn(data):
-        return (
-            (data[['x', 'y', 'z']]
-             .rolling(window)
-             .std()
-             < stdtol)
-            .all(axis=1)
-        )
+#     def fn(data):
+#         return (
+#             (data[['x', 'y', 'z']]
+#              .rolling(window)
+#              .std()
+#              < stdtol)
+#             .all(axis=1)
+#         )
 
-    stationary_indicator = pd.concat(
-        chunker(
-            data,
-            chunksize='4h',
-            leeway=window,
-            fn=fn
-        )
-    )
+#     stationary_indicator = pd.concat(
+#         chunker(
+#             data,
+#             chunksize='4h',
+#             leeway=window,
+#             fn=fn
+#         )
+#     )
 
-    return stationary_indicator
+#     return stationary_indicator
 
 
 def find_nonwear_segments(data, patience='90m', window='10s', stdtol=15 / 1000):
