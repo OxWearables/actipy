@@ -21,6 +21,10 @@ def read_device(input_file,
                 calibrate_gravity=True,
                 detect_nonwear=True,
                 resample_hz='uniform',
+                start_time=None,
+                end_time=None,
+                skipdays=0,
+                cutdays=0,
                 verbose=True):
     """
     Read and process accelerometer device file. Returns a pandas.DataFrame with
@@ -39,6 +43,16 @@ def read_device(input_file,
         "uniform", use the implied frequency (use this option to fix any device
         sampling errors). Pass None to disable. Defaults to "uniform".
     :type resample_hz: str or int, optional
+    :param start_time: Start time to read data. Pass None to read from the
+        beginning. Defaults to None.
+    :type start_time: str or datetime, optional
+    :param end_time: End time to read data. Pass None to read until the end.
+        Defaults to None.
+    :type end_time: str or datetime, optional
+    :param skipdays: Number of days to skip from the beginning. Defaults to 0.
+    :type skipdays: int, optional
+    :param cutdays: Number of days to cut from the end. Defaults to 0.
+    :type cutdays: int, optional
     :param verbose: Verbosity, defaults to True.
     :type verbose: bool, optional
     :return: Processed data and processing info.
@@ -48,6 +62,18 @@ def read_device(input_file,
     timer = Timer(verbose)
 
     data, info = _read_device(input_file, verbose)
+
+    # Filter data by start/end time, if specified
+    if start_time is not None:
+        data = data.loc[start_time:]
+    if end_time is not None:
+        data = data.loc[:end_time]
+
+    # Skip/cut days, if specified
+    if skipdays > 0:
+        data = data.loc[data.index[0] + pd.Timedelta(days=skipdays):]
+    if cutdays > 0:
+        data = data.loc[:data.index[-1] - pd.Timedelta(days=cutdays)]
 
     # data, info_process = process(data, info_read['SampleRate'],
     #                              lowpass_hz=lowpass_hz,
