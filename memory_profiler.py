@@ -53,7 +53,7 @@ def main():
     if args.detect_nonwear:
         timer.start('Detecting nonwear...')
         with memray.Tracker(f'{memray_dir}/detect_nonwear.bin'):
-            data, info_nonwear = P.detect_nonwear(data, patience='1m')
+            data, info_nonwear = P.flag_nonwear(data, patience='1m')
         timer.stop()
         info.update(info_nonwear)
 

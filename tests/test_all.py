@@ -101,7 +101,7 @@ def test_detect_nonwear():
 
     data, info = read_device()
     # Use a bad patience to force nonwear detection
-    data, info_nonwear = P.detect_nonwear(data, patience='1m')
+    data, info_nonwear = P.flag_nonwear(data, patience='1m')
 
     info_nonwear_ref = {
         'WearTime(days)': 0.1203330787037037,

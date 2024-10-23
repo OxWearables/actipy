@@ -7,7 +7,7 @@ import statsmodels.api as sm
 import warnings
 
 
-__all__ = ['lowpass', 'calibrate_gravity', 'detect_nonwear', 'resample', 'get_stationary_indicator']
+__all__ = ['lowpass', 'calibrate_gravity', 'flag_nonwear', 'resample', 'get_stationary_indicator', 'find_nonwear_segments']
 
 
 def resample(data, sample_rate, dropna=False, chunksize=1_000_000):
@@ -165,9 +165,9 @@ def lowpass(data, data_sample_rate, cutoff_rate=20, chunksize=1_000_000):
     return data, info
 
 
-def detect_nonwear(data, patience='90m', window='10s', stdtol=15 / 1000):
+def flag_nonwear(data, patience='90m', window='10s', stdtol=15 / 1000):
     """
-    Detect nonwear episodes based on long periods of no movement.
+    Flag nonwear episodes in the data by setting them to NA. Non-wear episodes are inferred from long periods of no movement.
 
     :param pandas.DataFrame data: A pandas.DataFrame of acceleration time-series. The index must be a DateTimeIndex.
     :type data: pandas.DataFrame.
@@ -183,34 +183,10 @@ def detect_nonwear(data, patience='90m', window='10s', stdtol=15 / 1000):
 
     info = {}
 
-    stationary_indicator = (  # this is more memory friendly than data[['x', 'y', 'z']].std()
-        data['x'].resample(window, origin='start').std().lt(stdtol)
-        & data['y'].resample(window, origin='start').std().lt(stdtol)
-        & data['z'].resample(window, origin='start').std().lt(stdtol)
-    )
+    nonwear_segments = find_nonwear_segments(data, patience=patience, window=window, stdtol=stdtol)
 
-    segment_edges = (stationary_indicator != stationary_indicator.shift(1))
-    segment_edges.iloc[0] = True  # first edge is always True
-    segment_ids = segment_edges.cumsum()
-    stationary_segment_ids = segment_ids[stationary_indicator]
-    stationary_segment_lengths = (
-        stationary_segment_ids
-        .groupby(stationary_segment_ids)
-        .agg(
-            start_time=lambda x: x.index[0],
-            length=lambda x: x.index[-1] - x.index[0]
-        )
-        .set_index('start_time')
-        .squeeze(axis=1)
-        # dtype defaults to int64 when series is empty, so
-        # astype('timedelta64[ns]') makes sure it's always a timedelta,
-        # otherwise comparison with Timedelta(patience) below will fail
-        .astype('timedelta64[ns]')
-    )
-    nonwear_segment_lengths = stationary_segment_lengths[stationary_segment_lengths > pd.Timedelta(patience)]
-
-    count_nonwear = len(nonwear_segment_lengths)
-    total_nonwear = nonwear_segment_lengths.sum().total_seconds()
+    count_nonwear = len(nonwear_segments)
+    total_nonwear = nonwear_segments.sum().total_seconds()
     total_wear = (
         data.index.to_series().diff()
         .pipe(lambda x: x[x < pd.Timedelta('1s')].sum())
@@ -223,7 +199,7 @@ def detect_nonwear(data, patience='90m', window='10s', stdtol=15 / 1000):
 
     # Flag nonwear segments
     data = data.copy(deep=True)  # copy to avoid modifying original data
-    for start_time, length in nonwear_segment_lengths.items():
+    for start_time, length in nonwear_segments.items():
         data.loc[start_time:start_time + length] = np.nan
 
     return data, info
@@ -483,6 +459,52 @@ def get_stationary_indicator(data, window='10s', stdtol=15 / 1000):
     )
 
     return stationary_indicator
+
+
+def find_nonwear_segments(data, patience='90m', window='10s', stdtol=15 / 1000):
+    """
+    Find nonwear episodes based on long periods of no movement.
+
+    :param pandas.DataFrame data: A pandas.DataFrame of acceleration time-series. The index must be a DateTimeIndex.
+    :type data: pandas.DataFrame.
+    :param patience: Minimum length of the stationary period to be flagged as non-wear. Defaults to 90 minutes ("90m").
+    :type patience: str, optional
+    :param window: Rolling window to use to check for stationary periods. Defaults to 10 seconds ("10s").
+    :type window: str, optional
+    :param stdtol: Standard deviation under which the window is considered stationary. Defaults to 15 milligravity (0.015).
+    :type stdtol: float, optional
+    :return: A Series where the DatetimeIndex indicates the start times of each non-wear segment and the values are the length
+        of each segment, in timedelta64[ns].
+    :rtype: pandas.Series
+    """
+
+    stationary_indicator = (  # this is more memory friendly than data[['x', 'y', 'z']].std()
+        data['x'].resample(window, origin='start').std().lt(stdtol)
+        & data['y'].resample(window, origin='start').std().lt(stdtol)
+        & data['z'].resample(window, origin='start').std().lt(stdtol)
+    )
+
+    segment_edges = (stationary_indicator != stationary_indicator.shift(1))
+    segment_edges.iloc[0] = True  # first edge is always True
+    segment_ids = segment_edges.cumsum()
+    stationary_segment_ids = segment_ids[stationary_indicator]
+    stationary_segment_lengths = (
+        stationary_segment_ids
+        .groupby(stationary_segment_ids)
+        .agg(
+            start_time=lambda x: x.index[0],
+            length=lambda x: x.index[-1] - x.index[0]
+        )
+        .set_index('start_time')
+        .squeeze(axis=1)
+        # dtype defaults to int64 when series is empty, so
+        # astype('timedelta64[ns]') makes sure it's always a timedelta,
+        # otherwise comparison with Timedelta(patience) below will fail
+        .astype('timedelta64[ns]')
+    )
+    nonwear_segment_lengths = stationary_segment_lengths[stationary_segment_lengths > pd.Timedelta(patience)]
+
+    return nonwear_segment_lengths
 
 
 def get_wear_time(t, tol=0.1):

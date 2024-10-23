@@ -110,7 +110,7 @@ def read_device(input_file,
 
     if detect_nonwear:
         timer.start("Nonwear detection...")
-        data, info_nonwear = P.detect_nonwear(data)
+        data, info_nonwear = P.flag_nonwear(data)
         info.update(info_nonwear)
         timer.stop()
 
@@ -176,7 +176,7 @@ def process(data, sample_rate,
 
     if detect_nonwear:
         timer.start("Nonwear detection...")
-        data, info_nonwear = P.detect_nonwear(data)
+        data, info_nonwear = P.flag_nonwear(data)
         info.update(info_nonwear)
         timer.stop()
 
