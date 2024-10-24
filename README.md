@@ -92,7 +92,7 @@ import actipy.processing as P
 
 data, info_lowpass = P.lowpass(data, 100, 20)
 data, info_calib = P.calibrate_gravity(data)
-data, info_nonwear = P.detect_nonwear(data)
+data, info_nonwear = P.flag_nonwear(data)
 data, info_resample = P.resample(data, sample_rate)
 ```
 

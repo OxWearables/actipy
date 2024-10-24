@@ -108,6 +108,6 @@ You can access the individual processing routines at
     import actipy.processing as P
 
     data, info_calib = P.calibrate_gravity(data, calib_cube=0.2)
-    data, info_nonwear = P.detect_nonwear(data, patience='2h')
+    data, info_nonwear = P.flag_nonwear(data, patience='2h')
 
 See the :doc:`API reference <api>`.
