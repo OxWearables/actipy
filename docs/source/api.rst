@@ -3,9 +3,9 @@ API reference
 
 .. autofunction:: actipy.read_device
 
-.. autofunction:: actipy.quality_control
-
 .. autofunction:: actipy.process
+
+.. autofunction:: actipy.processing.quality_control
 
 .. autofunction:: actipy.processing.lowpass
 
