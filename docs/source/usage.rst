@@ -18,18 +18,9 @@ Prerequisite
 Installation
 ------------
 
-With Pip:
-
 .. code-block:: console
 
     $ pip install actipy
-
-
-With Conda:
-
-.. code-block:: console
-
-    $ conda install -c oxwear actipy
 
 
 Basic example
