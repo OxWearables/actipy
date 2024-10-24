@@ -87,7 +87,7 @@ def read_device(input_file,
 
     # Basic quality control
     timer.start("Quality control...")
-    data, info_qc = qc(data, info['SampleRate'])
+    data, info_qc = P.quality_control(data, info['SampleRate'])
     info_qc['ReadErrors'] += info['ReadErrors']
     info.update(info_qc)
     timer.stop()
@@ -188,59 +188,6 @@ def process(data, sample_rate,
             data, info_resample = P.resample(data, resample_hz)
         info.update(info_resample)
         timer.stop()
-
-    return data, info
-
-
-def qc(data, sample_rate):
-    """ Basic quality control. Returns a dict with general info. Also checks and
-    corrects for non-increasing timestamps.
-    """
-
-    info = {}
-
-    if len(data) == 0:
-        info['NumTicks'] = 0
-        info['StartTime'] = None
-        info['EndTime'] = None
-        info['WearTime(days)'] = 0
-        info['NumInterrupts'] = 0
-        info['ReadErrors'] = 0
-        return data, info
-
-    # Start/end times, wear time, interrupts
-    tol = pd.Timedelta('1s')
-    tdiff = data.index.to_series().diff()  # Note: Index.diff() was only added in pandas 2.1
-    total_wear = tdiff[tdiff < tol].sum().total_seconds()
-    num_interrupts = (tdiff > tol).sum()
-    time_format = "%Y-%m-%d %H:%M:%S"
-    info['NumTicks'] = len(data)
-    info['StartTime'] = data.index[0].strftime(time_format)
-    info['EndTime'] = data.index[-1].strftime(time_format)
-    info['WearTime(days)'] = total_wear / (60 * 60 * 24)
-    info['NumInterrupts'] = num_interrupts
-
-    # Check for non-increasing timestamps. This is rare but can happen with
-    # buggy devices. TODO: Parser should do this.
-    errs = (tdiff <= pd.Timedelta(0)).sum()
-    del tdiff  # we're done with this
-    if errs > 0:
-        print("Found non-increasing data timestamps. Fixing...")
-        data = data[data
-                    .index
-                    .to_series()
-                    .cummax()
-                    .diff()
-                    .fillna(pd.Timedelta(1))
-                    .gt(pd.Timedelta(0))]
-        info['ReadErrors'] = int(np.ceil(errs / sample_rate))
-    else:
-        info['ReadErrors'] = 0
-
-    # Check if data covers all 24 hours of the day
-    coverage = data.notna().any(axis=1).groupby(data.index.hour).mean()
-    info['Covers24hOK'] = int(len(coverage) == 24 and np.min(coverage) >= 0.01)
-    del coverage
 
     return data, info
 

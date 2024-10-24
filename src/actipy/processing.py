@@ -7,7 +7,79 @@ import statsmodels.api as sm
 import warnings
 
 
-__all__ = ['lowpass', 'calibrate_gravity', 'flag_nonwear', 'find_nonwear_segments', 'resample']
+__all__ = ['quality_control', 'lowpass', 'calibrate_gravity', 'flag_nonwear', 'find_nonwear_segments', 'resample']
+
+
+def quality_control(data, sample_rate):
+    """
+    Perform basic quality control on the provided data.
+
+    This function performs the following tasks:
+    1. Returns a dictionary with general information about the data.
+    2. Checks for non-increasing timestamps and corrects them if necessary, returning the corrected data.
+
+    :param data: A pandas.DataFrame of acceleration time-series. The index must be a DateTimeIndex.
+    :type data: pandas.DataFrame.
+    :param sample_rate: Target sample rate (Hz) to achieve.
+    :type sample_rate: int or float
+    :return: A tuple containing the processed data and a dictionary with general information about the data.
+        The dictionary contains the following:
+        - 'NumTicks': Total number of ticks (samples) in the data.
+        - 'StartTime': First timestamp of the data.
+        - 'EndTime': Last timestamp of the data.
+        - 'WearTime(days)': The total wear time in days.
+        - 'NumInterrupts': The number of interruptions in the recording.
+        - 'ReadErrors': The number of data errors (if non-increasing timestamps are found).
+        - 'Covers24hOK': Whether the data covers all 24 hours of the day.
+    :rtype: (pandas.DataFrame, dict)
+    """
+
+    info = {}
+
+    if len(data) == 0:
+        info['NumTicks'] = 0
+        info['StartTime'] = None
+        info['EndTime'] = None
+        info['WearTime(days)'] = 0
+        info['NumInterrupts'] = 0
+        info['ReadErrors'] = 0
+        return data, info
+
+    # Start/end times, wear time, interrupts
+    tol = pd.Timedelta('1s')
+    tdiff = data.index.to_series().diff()  # Note: Index.diff() was only added in pandas 2.1
+    total_wear = tdiff[tdiff < tol].sum().total_seconds()
+    num_interrupts = (tdiff > tol).sum()
+    time_format = "%Y-%m-%d %H:%M:%S"
+    info['NumTicks'] = len(data)
+    info['StartTime'] = data.index[0].strftime(time_format)
+    info['EndTime'] = data.index[-1].strftime(time_format)
+    info['WearTime(days)'] = total_wear / (60 * 60 * 24)
+    info['NumInterrupts'] = num_interrupts
+
+    # Check for non-increasing timestamps. This is rare but can happen with
+    # buggy devices. TODO: Parser should do this.
+    errs = (tdiff <= pd.Timedelta(0)).sum()
+    del tdiff  # we're done with this
+    if errs > 0:
+        print("Found non-increasing data timestamps. Fixing...")
+        data = data[data
+                    .index
+                    .to_series()
+                    .cummax()
+                    .diff()
+                    .fillna(pd.Timedelta(1))
+                    .gt(pd.Timedelta(0))]
+        info['ReadErrors'] = int(np.ceil(errs / sample_rate))
+    else:
+        info['ReadErrors'] = 0
+
+    # Check if data covers all 24 hours of the day
+    coverage = data.notna().any(axis=1).groupby(data.index.hour).mean()
+    info['Covers24hOK'] = int(len(coverage) == 24 and np.min(coverage) >= 0.01)
+    del coverage
+
+    return data, info
 
 
 def resample(data, sample_rate, dropna=False, chunksize=1_000_000):
