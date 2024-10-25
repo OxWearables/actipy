@@ -104,9 +104,11 @@ def test_detect_nonwear():
     data, info_nonwear = P.flag_nonwear(data, patience='1m')
 
     info_nonwear_ref = {
-        'WearTime(days)': 0.1203330787037037,
         'NonwearTime(days)': 0.0008101851851851852,
-        'NumNonwearEpisodes': 1
+        'NumNonwearEpisodes': 1,
+        'WearTime(days)': 0.1203330787037037,
+        'NumInterrupts': 2,
+        'Covers24hOK': 0,
     }
     assert_dict_equal(info_nonwear, info_nonwear_ref, rel=0.01)
 
