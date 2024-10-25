@@ -25,6 +25,7 @@ def test_read_device():
         "EndTime": '2023-06-08 15:19:33',
         "NumTicks": 1021800,
         "WearTime(days)": 0.1211432638888889,
+        "DataSpan(days)": 0.12395172453703704,
         "NumInterrupts": 1,
         "Covers24hOK": 0
     }

@@ -11,6 +11,7 @@
 - **StartTime**: Timestamp marking the beginning of the data recording.
 - **EndTime**: Timestamp marking the end of the data recording.
 - **WearTime(days)**: Total time the device was worn, expressed in days.
+- **DataSpan(days)**: Time span of the data (difference between last and first timestamps).
 - **NumInterrupts**: Number of interruptions in the data recording.
 - **LowpassOK**: A binary indicator (1 for success, 0 for failure) showing whether the lowpass filter was applied successfully.
 - **LowpassCutoff(Hz)**: The cutoff frequency in Hertz for the lowpass filter.
