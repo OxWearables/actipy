@@ -19,18 +19,22 @@ def quality_control(data, sample_rate):
     2. Checks for non-increasing timestamps and corrects them if necessary, returning the corrected data.
 
     :param data: A pandas.DataFrame of acceleration time-series. The index must be a DateTimeIndex.
-    :type data: pandas.DataFrame.
+    :type data: pandas.DataFrame
     :param sample_rate: Target sample rate (Hz) to achieve.
     :type sample_rate: int or float
     :return: A tuple containing the processed data and a dictionary with general information about the data.
         The dictionary contains the following:
-        - 'NumTicks': Total number of ticks (samples) in the data.
-        - 'StartTime': First timestamp of the data.
-        - 'EndTime': Last timestamp of the data.
-        - 'WearTime(days)': The total wear time in days.
-        - 'NumInterrupts': The number of interruptions in the recording.
-        - 'ReadErrors': The number of data errors (if non-increasing timestamps are found).
-        - 'Covers24hOK': Whether the data covers all 24 hours of the day.
+
+        - **NumTicks**: Total number of ticks (samples) in the data.
+        - **StartTime**: First timestamp of the data.
+        - **EndTime**: Last timestamp of the data.
+        - **WearTime(days)**: Total wear time, in days. This is simply the total \
+            duration of valid (non-NaN) data and does not account for potential \
+            nonwear segments. See ``find_nonwear_segments`` and ``flag_nonwear`` to \
+            find and flag nonwear segments in the data.
+        - **NumInterrupts**: The number of interruptions in the data (gaps or NaNs between samples).
+        - **ReadErrors**: The number of data errors (if non-increasing timestamps are found).
+        - **Covers24hOK**: Whether the data covers all 24 hours of the day.
     :rtype: (pandas.DataFrame, dict)
     """
 
