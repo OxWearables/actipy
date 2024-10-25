@@ -20,6 +20,7 @@ def quality_control(data, sample_rate):
 
     :param data: A pandas.DataFrame of acceleration time-series. The index must be a DateTimeIndex.
     :type data: pandas.DataFrame
+    :type data: pandas.DataFrame
     :param sample_rate: Target sample rate (Hz) to achieve.
     :type sample_rate: int or float
     :return: A tuple containing the processed data and a dictionary with general information about the data.
@@ -32,6 +33,7 @@ def quality_control(data, sample_rate):
             duration of valid (non-NaN) data and does not account for potential \
             nonwear segments. See ``find_nonwear_segments`` and ``flag_nonwear`` to \
             find and flag nonwear segments in the data.
+        - **DataSpan(days)**: Time span of the data (difference between last and first timestamps).
         - **NumInterrupts**: The number of interruptions in the data (gaps or NaNs between samples).
         - **ReadErrors**: The number of data errors (if non-increasing timestamps are found).
         - **Covers24hOK**: Whether the data covers all 24 hours of the day.
@@ -46,6 +48,7 @@ def quality_control(data, sample_rate):
         info['EndTime'] = None
         info['NumTicks'] = 0
         info['WearTime(days)'] = 0
+        info['DataSpan(days)'] = 0
         info['NumInterrupts'] = 0
         return data, info
 
@@ -77,7 +80,8 @@ def quality_control(data, sample_rate):
     total_time = tdiff[tdiff < tol].sum().total_seconds()
     num_interrupts = (tdiff > tol).sum()
     del tdiff  # we're done with this
-    info['WearTime(days)'] = total_time / (60 * 60 * 24)  # redundant now, but might get updated later if nonwear detection is run
+    info['WearTime(days)'] = total_time / (60 * 60 * 24)
+    info['DataSpan(days)'] = (data.index[-1] - data.index[0]).total_seconds() / (60 * 60 * 24)
     info['NumInterrupts'] = num_interrupts
 
     # Check if data covers all 24 hours of the day
