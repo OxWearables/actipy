@@ -259,22 +259,33 @@ def flag_nonwear(data, patience='90m', window='10s', stdtol=15 / 1000):
 
     nonwear_segments = find_nonwear_segments(data, patience=patience, window=window, stdtol=stdtol)
 
+    # Num nonwear episodes and total nonwear time
     count_nonwear = len(nonwear_segments)
     total_nonwear = nonwear_segments.sum().total_seconds()
-    total_wear = (
-        data.index.to_series().diff()
-        .pipe(lambda x: x[x < pd.Timedelta('1s')].sum())
-        .total_seconds()
-    ) - total_nonwear
-
-    info['WearTime(days)'] = total_wear / (60 * 60 * 24)
-    info['NonwearTime(days)'] = total_nonwear / (60 * 60 * 24)
-    info['NumNonwearEpisodes'] = count_nonwear
 
     # Flag nonwear segments
     data = data.copy(deep=True)  # copy to avoid modifying original data
     for start_time, length in nonwear_segments.items():
-        data.loc[start_time:start_time + length] = np.nan
+        data.loc[start_time : start_time + length] = np.nan
+    del nonwear_segments
+
+    # Calculate total wear time and interrupts (data gaps)
+    tol = pd.Timedelta('1s')
+    tdiff = data.dropna().index.to_series().diff()  # Note: Index.diff() was only added in pandas 2.1
+    total_time = tdiff[tdiff < tol].sum().total_seconds()
+    num_interrupts = (tdiff > tol).sum()
+    del tdiff
+
+    # Check if data covers all 24 hours of the day
+    coverage = data.notna().any(axis=1).groupby(data.index.hour).mean()
+    covers24hok = int(len(coverage) == 24 and np.min(coverage) >= 0.01)
+    del coverage
+
+    info['NonwearTime(days)'] = total_nonwear / (60 * 60 * 24)
+    info['NumNonwearEpisodes'] = count_nonwear
+    info['WearTime(days)'] = total_time / (60 * 60 * 24)
+    info['NumInterrupts'] = num_interrupts
+    info['Covers24hOK'] = covers24hok
 
     return data, info
 
@@ -553,9 +564,10 @@ def find_nonwear_segments(data, patience='90m', window='10s', stdtol=15 / 1000):
     """
 
     stationary_indicator = (  # this is more memory friendly than data[['x', 'y', 'z']].std()
-        data['x'].resample(window, origin='start').std().lt(stdtol)
-        & data['y'].resample(window, origin='start').std().lt(stdtol)
-        & data['z'].resample(window, origin='start').std().lt(stdtol)
+        # use ffill() so that NA also counted as stationary
+        data['x'].ffill().resample(window, origin='start').std().lt(stdtol)
+        & data['y'].ffill().resample(window, origin='start').std().lt(stdtol)
+        & data['z'].ffill().resample(window, origin='start').std().lt(stdtol)
     )
 
     segment_edges = (stationary_indicator != stationary_indicator.shift(1))
