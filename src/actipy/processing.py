@@ -20,7 +20,6 @@ def quality_control(data, sample_rate):
 
     :param data: A pandas.DataFrame of acceleration time-series. The index must be a DateTimeIndex.
     :type data: pandas.DataFrame
-    :type data: pandas.DataFrame
     :param sample_rate: Target sample rate (Hz) to achieve.
     :type sample_rate: int or float
     :return: A tuple containing the processed data and a dictionary with general information about the data.
@@ -95,7 +94,7 @@ def quality_control(data, sample_rate):
 def resample(data, sample_rate, dropna=False, chunksize=1_000_000):
     """
     Nearest neighbor resampling. For downsampling, it is recommended to first
-    apply an antialiasing filter.
+    apply an antialiasing filter (e.g. a low-pass filter, see ``lowpass``).
 
     :param data: A pandas.DataFrame of acceleration time-series. The index must be a DateTimeIndex.
     :type data: pandas.DataFrame.
@@ -253,7 +252,7 @@ def flag_nonwear(data, patience='90m', window='10s', stdtol=15 / 1000):
 
     :param pandas.DataFrame data: A pandas.DataFrame of acceleration time-series. The index must be a DateTimeIndex.
     :type data: pandas.DataFrame.
-    :param patience: Minimum length of the stationary period to be flagged as non-wear. Defaults to 90 minutes ("90m").
+    :param patience: The minimum duration that a stationary episode must have to be classified as non-wear episode. Defaults to 90 minutes ("90m").
     :type patience: str, optional
     :param window: Rolling window to use to check for stationary periods. Defaults to 10 seconds ("10s").
     :type window: str, optional
@@ -560,7 +559,7 @@ def find_nonwear_segments(data, patience='90m', window='10s', stdtol=15 / 1000):
 
     :param pandas.DataFrame data: A pandas.DataFrame of acceleration time-series. The index must be a DateTimeIndex.
     :type data: pandas.DataFrame.
-    :param patience: Minimum length of the stationary period to be flagged as non-wear. Defaults to 90 minutes ("90m").
+    :param patience: The minimum duration that a stationary episode must have to be classified as non-wear episode. Defaults to 90 minutes ("90m").
     :type patience: str, optional
     :param window: Rolling window to use to check for stationary periods. Defaults to 10 seconds ("10s").
     :type window: str, optional
