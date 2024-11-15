@@ -225,14 +225,15 @@ def _read_device(input_file, verbose=True):
         timer.stop()
 
         timer.start("Converting to dataframe...")
-        # NOTE: Care is taken to avoid excessive memory usage. First we open the
-        # file as mmap, then we load each column using np.asarray (np.array uses
-        # more memory - not sure why), and finally we convert to
-        # pandas.DataFrame with copy=False to avoid re-copying.
+        # NOTE: To reduce memory usage, we open the file as mmap and use
+        # np.asarray to define the dict for the dataframe construction. Note
+        # that the dataframe uses copy=True because we need to remove all
+        # references to the mmap object so that the temporary directory can be
+        # deleted later (another way is to use np.array and copy=False).
         data_mmap = np.load(os.path.join(tmpdir, "data.npy"), mmap_mode='r')
-        data = {c: np.asarray(data_mmap[c]) for c in data_mmap.dtype.names}
-        data = pd.DataFrame(data, copy=False)
+        data = pd.DataFrame({c: np.asarray(data_mmap[c]) for c in data_mmap.dtype.names}, copy=True)
         data.set_index('time', inplace=True)
+        del data_mmap  # delete this so that the temporary directory can be deleted
         timer.stop()
 
         return data, info
@@ -241,9 +242,13 @@ def _read_device(input_file, verbose=True):
 
         # Cleanup, delete temporary directory
         try:
+            # NOTE: For the tmpdir to be deleted, all references to the mmap
+            # object must have been deleted. This includes data_mmap, but also
+            # indirect references like the dataframe (copy=False) or arrays
+            # created with np.asarray.
             shutil.rmtree(tmpdir)
         except OSError as e:
-            print("Error: %s - %s." % (e.filename, e.strerror))
+            print(f"Error: {e.filename} - {e.strerror}.")
 
 
 def java_read_device(input_file, output_dir, verbose=True):
