@@ -238,6 +238,8 @@ public class AxivityReader {
                     if (rateCode == 0) {
                         // Old format, where pos26 = freq
                         freq = (float) block.getShort(26);
+                        // Check that sample rate is valid, otherwise skip block
+                        if (freq == 0) { throw new Exception("Found zero sample rate is zero. Skipping data block..."); }
                         offsetStart = 0;
                     } else {
                         // New format
@@ -247,7 +249,7 @@ public class AxivityReader {
                         offsetStart = (float) -timestampOffset / freq;
                         // Checksum
                         for (int i = 0; i < BLOCKSIZE / 2; i++) { checkSum += block.getShort(i * 2); }
-                        if (checkSum != 0) { throw new Exception("Found checksum error. Skipping data block"); }
+                        if (checkSum != 0) { throw new Exception("Found checksum error. Skipping data block..."); }
                     }
                     sampleRate = freq;
 
