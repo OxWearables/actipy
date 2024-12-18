@@ -8,6 +8,6 @@ authors:
   given-names: "Aiden"
   orcid: "https://orcid.org/0000-0001-9600-5575"
 title: "actipy: Python toolkit to process wearable sensor data"
-doi: https://doi.org/10.5281/zenodo.14514488
+doi: 10.5281/zenodo.14514488
 date-released: 2021-10-13
 url: https://github.com/OxWearables/actipy
