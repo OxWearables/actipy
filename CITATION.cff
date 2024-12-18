@@ -10,4 +10,4 @@ authors:
 title: "actipy: Python toolkit to process wearable sensor data"
 doi: 10.5281/zenodo.14514488
 date-released: 2021-10-13
-url: https://github.com/OxWearables/actipy
+url: "https://github.com/OxWearables/actipy"
