@@ -1,5 +1,8 @@
 # actipy
 
+[![Github all releases](https://img.shields.io/github/release/OxWearables/actipy.svg)](https://github.com/OxWearables/actipy/releases/)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.14514488.svg)](https://doi.org/10.5281/zenodo.14514488)
+
 A Python package to process accelerometer data.
 
 Axivity3 and Axivity6 (`.cwa`), Actigraph (`.gt3x`), and GENEActiv (`.bin`) files are supported,
