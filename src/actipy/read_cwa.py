@@ -32,6 +32,10 @@ def main():
     parser.add_argument("--detect-nonwear", "-w", help="Detect non-wear.", action="store_true")
     parser.add_argument("--calibrate-gravity", "-g", help="Calibrate gravity.", action="store_true")
     parser.add_argument("--output-cols", "-c", help="Restrict output columns to those listed (excluding time index column). Output all columns if falsy.", type=str, nargs="+", default=None)
+    parser.add_argument("--start-time", help="Start time for data extraction in ISO 8601 format (YYYY-MM-DD HH:MM:SS), e.g. '2000-01-31 12:34:56' (default %(default)s).", type=str, default=None)
+    parser.add_argument("--end-time", help="Start time for data extraction in ISO 8601 format (YYYY-MM-DD HH:MM:SS), e.g. '2000-01-31 12:34:56' (default %(default)s).", type=str, default=None)
+    parser.add_argument('--skipdays', help="Number of days to skip from the beginning (default %(default)s).", type=int, default=0)
+    parser.add_argument('--cutdays', help="Number of days to cut from the end (default: %(default)s).", type=int, default=0)
     parser.add_argument("--quiet", "-q", action="store_true", help="Suppress output.")
 
     args = parser.parse_args()
@@ -46,6 +50,10 @@ def main():
         calibrate_gravity=args.calibrate_gravity,
         detect_nonwear=args.detect_nonwear,
         resample_hz=resample_hz,
+        start_time=args.start_time,
+        end_time=args.end_time,
+        skipdays=args.skipdays,
+        cutdays=args.cutdays,
         verbose=verbose,
     )
 
