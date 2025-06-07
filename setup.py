@@ -55,6 +55,7 @@ setuptools.setup(
         "scipy>=1.7",
         "pandas>=1.3",
         "statsmodels>=0.13",
+        "tqdm"
         # "tqdm==4.64.*",
     ],
     extras_require={
