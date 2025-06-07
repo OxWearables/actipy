@@ -97,10 +97,10 @@ def bin2csv(bin_path: str, csv_path: str) -> None:
         writer = csv.writer(csvfile, dialect='excel')
         writer.writerow(CSV_HEADER)
 
-        # Process each packet slice
-        for i_off, start_off in enumerate(tqdm(offsets)):
-            end_off = offsets[i_off + 1] if (i_off + 1) < num_offsets else file_data_size
-            packet = file_data[start_off:end_off]
+        # Process each packet
+        for packet_idx, packet_start in enumerate(tqdm(offsets)):
+            packet_end = offsets[packet_idx + 1] if (packet_idx + 1) < num_offsets else file_data_size
+            packet = file_data[packet_start:packet_end]
 
             # Minimum size check: header is 8s + I*7 = 8 + 28 = 36 bytes
             if len(packet) < 36:
@@ -164,61 +164,61 @@ def bin2csv(bin_path: str, csv_path: str) -> None:
             time_list = [int(1000 * (t0 + i * dt)) for i in range(max_count)]
 
             # Now parse each raw sensor block one by one, assigning to the correct indices
-            slice_start = 0
+            block_start = 0
 
             # ACC (acc_count samples)
             if acc_count > 0:
                 step = max_count / acc_count
-                slice_end = slice_start + acc_count * ACC_STRUCT.size
+                block_end = block_start + acc_count * ACC_STRUCT.size
                 indices = [int(i * step) for i in range(acc_count)]
-                slices = ACC_STRUCT.iter_unpack(payload[slice_start:slice_end])
-                for (x, y, z), idx in zip(slices, indices):
+                blocks = ACC_STRUCT.iter_unpack(payload[block_start:block_end])
+                for (x, y, z), idx in zip(blocks, indices):
                     x = x * (acc_scale_pos if x > 0 else acc_scale_neg)
                     y = y * (acc_scale_pos if y > 0 else acc_scale_neg)
                     z = z * (acc_scale_pos if z > 0 else acc_scale_neg)
                     acc_x_list[idx] = f'{x:.6f}'
                     acc_y_list[idx] = f'{y:.6f}'
                     acc_z_list[idx] = f'{z:.6f}'
-                slice_start = slice_end  # update slice_start to the end of the block
+                block_start = block_end  # update slice_start to the end of the block
 
             # GYRO (gyro_count samples)
             if gyro_count > 0:
                 step = max_count / gyro_count
-                slice_end = slice_start + gyro_count * GYRO_STRUCT.size
+                block_end = block_start + gyro_count * GYRO_STRUCT.size
                 indices = [int(i * step) for i in range(gyro_count)]
-                slices = GYRO_STRUCT.iter_unpack(payload[slice_start:slice_end])
-                for (x, y, z), idx in zip(slices, indices):
+                blocks = GYRO_STRUCT.iter_unpack(payload[block_start:block_end])
+                for (x, y, z), idx in zip(blocks, indices):
                     x = x * (gyro_scale_pos if x > 0 else gyro_scale_neg)
                     y = y * (gyro_scale_pos if y > 0 else gyro_scale_neg)
                     z = z * (gyro_scale_pos if z > 0 else gyro_scale_neg)
                     gyro_x_list[idx] = f'{x:.3f}'
                     gyro_y_list[idx] = f'{y:.3f}'
                     gyro_z_list[idx] = f'{z:.3f}'
-                slice_start = slice_end  # update slice_start to the end of the block
+                block_start = block_end  # update slice_start to the end of the block
 
             # TEMPERATURE (temp_count samples)
             if temp_count > 0:
                 step = max_count / temp_count
-                slice_end = slice_start + temp_count * TEMP_STRUCT.size
+                block_end = block_start + temp_count * TEMP_STRUCT.size
                 indices = [int(i * step) for i in range(temp_count)]
-                slices = TEMP_STRUCT.iter_unpack(payload[slice_start:slice_end])
-                for (body_temp, ambient_temp), idx in zip(slices, indices):
+                blocks = TEMP_STRUCT.iter_unpack(payload[block_start:block_end])
+                for (body_temp, ambient_temp), idx in zip(blocks, indices):
                     body_temp = body_temp * 0.1
                     ambient_temp = ambient_temp * 0.1
                     body_temp_list[idx] = body_temp
                     ambient_temp_list[idx] = ambient_temp
-                slice_start = slice_end  # update slice_start to the end of the block
+                block_start = block_end  # update slice_start to the end of the block
 
             # HEART RATE (hr_count samples)
             if hr_count > 0:
                 step = max_count / hr_count
-                slice_end = slice_start + hr_count * HR_STRUCT.size
+                block_end = block_start + hr_count * HR_STRUCT.size
                 indices = [int(i * step) for i in range(hr_count)]
-                slices = HR_STRUCT.iter_unpack(payload[slice_start:slice_end])
-                for (hr_raw_val, hr_val), idx in zip(slices, indices):
+                blocks = HR_STRUCT.iter_unpack(payload[block_start:block_end])
+                for (hr_raw_val, hr_val), idx in zip(blocks, indices):
                     hr_raw_list[idx] = hr_raw_val
                     hr_list[idx] = hr_val
-                slice_start = slice_end  # update slice_start to the end of the block
+                block_start = block_end  # update slice_start to the end of the block
 
             # Finally, write out each of the max_count rows
             for i in range(max_count):
