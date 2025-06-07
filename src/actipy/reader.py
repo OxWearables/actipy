@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import subprocess
 
+from actipy import matrix_reader
 from actipy import processing as P
 
 
@@ -198,6 +199,10 @@ def _read_device(input_file, verbose=True):
     general info.
     """
 
+    # Use a separate reader if the file is from a Matrix device
+    if matrix_reader.is_matrix_bin_file(input_file):
+        return _read_device_matrix(input_file, verbose)
+
     try:
 
         timer = Timer(verbose)
@@ -249,6 +254,71 @@ def _read_device(input_file, verbose=True):
             shutil.rmtree(tmpdir)
         except OSError as e:
             print(f"Error: {e.filename} - {e.strerror}.")
+
+
+def _read_device_matrix(input_file, verbose=True):
+    """ Internal function that reads a Matrix device file specifically. Returns
+    parsed data as a pandas dataframe, and a dict with general info.
+    """
+    try:
+
+        timer = Timer(verbose)
+
+        # Temporary diretory to store internal runtime files
+        tmpdir = tempfile.mkdtemp()
+
+        info = {}
+        info['Filename'] = input_file
+        info['Filesize(MB)'] = round(os.path.getsize(input_file) / (1024 * 1024), 1)
+        info['Device'] = 'Matrix'
+        info['DeviceID'] = 'Matrix'
+
+        # Decompress file if it is compressed
+        if input_file.lower().endswith((".gz", ".zip")):
+            timer.start("Decompressing...")
+            input_file = decompr(input_file, target_dir=tmpdir)
+            timer.stop()
+
+        # Parsed data will be extracted to a CSV file
+        output_file = os.path.join(tmpdir, "data.csv")
+
+        # Parsing. Main action happens here.
+        print("Reading file...")
+        matrix_reader.bin2csv(input_file, output_file)
+        print("Done!")
+
+        timer.start("Converting to dataframe...")
+        data = pd.read_csv(
+            output_file,
+            index_col='time',
+            dtype={
+                'x': 'f4', 'y': 'f4', 'z': 'f4',
+                'gyro_x': 'f4', 'gyro_y': 'f4', 'gyro_z': 'f4',
+                'body_surface_temperature': 'f4', 'ambient_temperature': 'f4',
+                'heart_rate_raw': 'f4', 'heart_rate': 'f4'
+            },
+        )
+        data.index = pd.to_datetime(data.index, unit='ms')
+        # TODO:
+        info['ReadOK'] = 1
+        info['ReadErrors'] = 0
+        info['SampleRate'] = infer_sample_rate(data.index)
+        timer.stop()
+
+        return data, info
+
+    finally:
+
+        # Cleanup, delete temporary directory
+        try:
+            # NOTE: For the tmpdir to be deleted, all references to the mmap
+            # object must have been deleted. This includes data_mmap, but also
+            # indirect references like the dataframe (copy=False) or arrays
+            # created with np.asarray.
+            shutil.rmtree(tmpdir)
+        except OSError as e:
+            print(f"Error: {e.filename} - {e.strerror}.")
+
 
 
 def java_read_device(input_file, output_dir, verbose=True):
@@ -402,6 +472,16 @@ def fix_nonincr_time(data):
                     .fillna(pd.Timedelta(1))
                     > pd.Timedelta(0)]
     return data, errs
+
+
+def infer_sample_rate(t):
+    """ Like pd.infer_freq but more forgiving """
+    tdiff = t.to_series().diff()
+    q1, q3 = tdiff.quantile([0.25, 0.75])
+    tdiff = tdiff[(q1 <= tdiff) & (tdiff <= q3)]
+    dt = tdiff.mean()
+    sample_rate = pd.Timedelta('1s') / pd.Timedelta(dt)
+    return sample_rate
 
 
 class Timer:
