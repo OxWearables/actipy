@@ -75,7 +75,7 @@ def quality_control(data, sample_rate):
     info['EndTime'] = data.index[-1].strftime(time_format)
     info['NumTicks'] = len(data)
     tol = pd.Timedelta('1s')
-    tdiff = data.dropna().index.to_series().diff()  # Note: Index.diff() was only added in pandas 2.1
+    tdiff = data.dropna(subset=['x', 'y', 'z']).index.to_series().diff()  # Note: Index.diff() was only added in pandas 2.1
     total_time = tdiff[tdiff < tol].sum().total_seconds()
     num_interrupts = (tdiff > tol).sum()
     del tdiff  # we're done with this
