@@ -26,6 +26,8 @@ def read_device(input_file,
                 end_time=None,
                 skipdays=0,
                 cutdays=0,
+                calibrate_gravity_kwargs=None,
+                flag_nonwear_kwargs=None,
                 verbose=True):
     """
     Read and process accelerometer device file. Returns a pandas.DataFrame with
@@ -54,6 +56,10 @@ def read_device(input_file,
     :type skipdays: int, optional
     :param cutdays: Number of days to cut from the end. Defaults to 0.
     :type cutdays: int, optional
+    :param calibrate_gravity_kwargs: Additional keyword arguments to pass to calibrate_gravity function. Defaults to None.
+    :type calibrate_gravity_kwargs: dict, optional
+    :param flag_nonwear_kwargs: Additional keyword arguments to pass to flag_nonwear function. Defaults to None.
+    :type flag_nonwear_kwargs: dict, optional
     :param verbose: Verbosity, defaults to True.
     :type verbose: bool, optional
     :return: Processed data and processing info.
@@ -105,13 +111,15 @@ def read_device(input_file,
 
     if calibrate_gravity:
         timer.start("Gravity calibration...")
-        data, info_calib = P.calibrate_gravity(data, return_coeffs=False)
+        calib_kwargs = calibrate_gravity_kwargs or {}
+        data, info_calib = P.calibrate_gravity(data, return_coeffs=False, **calib_kwargs)
         info.update(info_calib)
         timer.stop()
 
     if detect_nonwear:
         timer.start("Nonwear detection...")
-        data, info_nonwear = P.flag_nonwear(data)
+        nonwear_kwargs = flag_nonwear_kwargs or {}
+        data, info_nonwear = P.flag_nonwear(data, **nonwear_kwargs)
         info.update(info_nonwear)
         timer.stop()
 
@@ -132,6 +140,8 @@ def process(data, sample_rate,
             calibrate_gravity=True,
             detect_nonwear=True,
             resample_hz='uniform',
+            calibrate_gravity_kwargs=None,
+            flag_nonwear_kwargs=None,
             verbose=True):
     """
     Process a pandas.DataFrame of acceleration time-series. Returns a
@@ -153,6 +163,10 @@ def process(data, sample_rate,
         "uniform", use the implied frequency (use this option to fix any device
         sampling errors). Pass None to disable. Defaults to "uniform".
     :type resample_hz: str or int, optional
+    :param calibrate_gravity_kwargs: Additional keyword arguments to pass to calibrate_gravity function. Defaults to None.
+    :type calibrate_gravity_kwargs: dict, optional
+    :param flag_nonwear_kwargs: Additional keyword arguments to pass to flag_nonwear function. Defaults to None.
+    :type flag_nonwear_kwargs: dict, optional
     :param verbose: Verbosity, defaults to True.
     :type verbose: bool, optional
     :return: Processed data and processing info.
@@ -171,13 +185,15 @@ def process(data, sample_rate,
 
     if calibrate_gravity:
         timer.start("Gravity calibration...")
-        data, info_calib = P.calibrate_gravity(data)
+        calib_kwargs = calibrate_gravity_kwargs or {}
+        data, info_calib = P.calibrate_gravity(data, **calib_kwargs)
         info.update(info_calib)
         timer.stop()
 
     if detect_nonwear:
         timer.start("Nonwear detection...")
-        data, info_nonwear = P.flag_nonwear(data)
+        nonwear_kwargs = flag_nonwear_kwargs or {}
+        data, info_nonwear = P.flag_nonwear(data, **nonwear_kwargs)
         info.update(info_nonwear)
         timer.stop()
 
