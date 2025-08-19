@@ -297,7 +297,7 @@ def flag_nonwear(data, patience='90m', window='10s', stdtol=15 / 1000):
     return data, info
 
 
-def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, window='10s', stdtol=15 / 1000, return_coeffs=True, chunksize=1_000_000):  # noqa: C901
+def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, window='10s', stdtol=15 / 1000, stdtol_min=None, return_coeffs=True, chunksize=1_000_000):  # noqa: C901
     """
     Gravity calibration method of van Hees et al. 2014 (https://pubmed.ncbi.nlm.nih.gov/25103964/)
 
@@ -310,8 +310,10 @@ def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, window='10s', 
     :type calib_min_samples: int, optional.
     :param window: Rolling window to use to check for stationary periods. Defaults to 10 seconds ("10s").
     :type window: str, optional
-    :param stdtol: Standard deviation under which the window is considered stationary. Defaults to 15 milligravity (0.015).
+    :param stdtol: Standard deviation under which a window is considered stationary. Defaults to 15 milligravity (0.015).
     :type stdtol: float, optional
+    :param stdtol_min: Minimum standard deviation above which a window is considered valid. Defaults to None (no filtering).
+    :type stdtol_min: float, optional
     :param chunksize: Chunk size for chunked processing. Defaults to 1_000_000 rows.
     :type chunksize: int, optional
     :return: Processed data and processing info.
@@ -320,11 +322,13 @@ def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, window='10s', 
 
     info = {}
 
-    stationary_indicator = (  # this is more memory friendly than of data[['x', 'y', 'z']].std()
-        data['x'].resample(window, origin='start').std().lt(stdtol)
-        & data['y'].resample(window, origin='start').std().lt(stdtol)
-        & data['z'].resample(window, origin='start').std().lt(stdtol)
-    )
+    x_std = data['x'].resample(window, origin='start').std()
+    y_std = data['y'].resample(window, origin='start').std()
+    z_std = data['z'].resample(window, origin='start').std()
+    stationary_indicator = x_std.lt(stdtol) & y_std.lt(stdtol) & z_std.lt(stdtol)
+    if stdtol_min is not None:
+        stationary_indicator &= x_std.gt(stdtol_min) & y_std.gt(stdtol_min) & z_std.gt(stdtol_min)
+    del x_std, y_std, z_std
 
     xyz = (
         data[['x', 'y', 'z']]
