@@ -3,16 +3,24 @@ import actipy
 
 def main():
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument('datafile')
-    parser.add_argument('--lowpass_hz', default=None, type=float)
-    parser.add_argument('--calibrate_gravity', action='store_true')
-    parser.add_argument('--detect_nonwear', action='store_true')
-    parser.add_argument('--resample_hz', default=None, type=float)
-    parser.add_argument('--start_time', default=None, type=str)
-    parser.add_argument('--end_time', default=None, type=str)
-    parser.add_argument('--skipdays', default=0, type=int)
-    parser.add_argument('--cutdays', default=0, type=int)
+    parser = argparse.ArgumentParser(description='Process accelerometer data files')
+    parser.add_argument('datafile', help='Path to accelerometer data file')
+    parser.add_argument('--lowpass_hz', default=None, type=float,
+                        help='Cutoff frequency (Hz) for low-pass filter')
+    parser.add_argument('--calibrate_gravity', action='store_true',
+                        help='Perform gravity calibration')
+    parser.add_argument('--detect_nonwear', action='store_true',
+                        help='Detect and flag non-wear periods')
+    parser.add_argument('--resample_hz', default=None, type=float,
+                        help='Target frequency (Hz) for resampling')
+    parser.add_argument('--start_time', default=None, type=str,
+                        help='Start time for data (YYYY-MM-DD HH:MM:SS)')
+    parser.add_argument('--end_time', default=None, type=str,
+                        help='End time for data (YYYY-MM-DD HH:MM:SS)')
+    parser.add_argument('--skipdays', default=0, type=int,
+                        help='Number of days to skip from beginning')
+    parser.add_argument('--cutdays', default=0, type=int,
+                        help='Number of days to cut from end')
     parser.add_argument('--start_first_complete_minute', action='store_true',
                         help='Start data from first complete minute (1 second tolerance)')
     args = parser.parse_args()
