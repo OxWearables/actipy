@@ -26,6 +26,7 @@ def read_device(input_file,
                 end_time=None,
                 skipdays=0,
                 cutdays=0,
+                start_first_complete_minute=False,
                 calibrate_gravity_kwargs=None,
                 flag_nonwear_kwargs=None,
                 verbose=True):
@@ -56,6 +57,8 @@ def read_device(input_file,
     :type skipdays: int, optional
     :param cutdays: Number of days to cut from the end. Defaults to 0.
     :type cutdays: int, optional
+    :param start_first_complete_minute: Whether to start data from the first complete minute. Defaults to False.
+    :type start_first_complete_minute: bool, optional
     :param calibrate_gravity_kwargs: Additional keyword arguments to pass to calibrate_gravity function. Defaults to None.
     :type calibrate_gravity_kwargs: dict, optional
     :param flag_nonwear_kwargs: Additional keyword arguments to pass to flag_nonwear function. Defaults to None.
@@ -126,9 +129,9 @@ def read_device(input_file,
     if resample_hz not in (None, False):
         timer.start("Resampling...")
         if resample_hz in ('uniform', True):
-            data, info_resample = P.resample(data, info['SampleRate'])
+            data, info_resample = P.resample(data, info['SampleRate'], start_first_complete_minute=start_first_complete_minute)
         else:
-            data, info_resample = P.resample(data, resample_hz)
+            data, info_resample = P.resample(data, resample_hz, start_first_complete_minute=start_first_complete_minute)
         info.update(info_resample)
         timer.stop()
 
@@ -140,6 +143,7 @@ def process(data, sample_rate,
             calibrate_gravity=True,
             detect_nonwear=True,
             resample_hz='uniform',
+            start_first_complete_minute=False,
             calibrate_gravity_kwargs=None,
             flag_nonwear_kwargs=None,
             verbose=True):
@@ -163,6 +167,10 @@ def process(data, sample_rate,
         "uniform", use the implied frequency (use this option to fix any device
         sampling errors). Pass None to disable. Defaults to "uniform".
     :type resample_hz: str or int, optional
+    :param start_first_complete_minute: Whether to start data from the first complete minute.
+        Uses 1 second tolerance - if within 1 second of minute boundary, uses that minute,
+        otherwise advances to next minute. Defaults to False.
+    :type start_first_complete_minute: bool, optional
     :param calibrate_gravity_kwargs: Additional keyword arguments to pass to calibrate_gravity function. Defaults to None.
     :type calibrate_gravity_kwargs: dict, optional
     :param flag_nonwear_kwargs: Additional keyword arguments to pass to flag_nonwear function. Defaults to None.
@@ -200,9 +208,9 @@ def process(data, sample_rate,
     if resample_hz not in (None, False):
         timer.start("Resampling...")
         if resample_hz in ('uniform', True):
-            data, info_resample = P.resample(data, sample_rate)
+            data, info_resample = P.resample(data, sample_rate, start_first_complete_minute=start_first_complete_minute)
         else:
-            data, info_resample = P.resample(data, resample_hz)
+            data, info_resample = P.resample(data, resample_hz, start_first_complete_minute=start_first_complete_minute)
         info.update(info_resample)
         timer.stop()
 

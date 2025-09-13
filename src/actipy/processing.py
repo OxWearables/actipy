@@ -91,7 +91,7 @@ def quality_control(data, sample_rate):
     return data, info
 
 
-def resample(data, sample_rate, dropna=False, chunksize=1_000_000):
+def resample(data, sample_rate, dropna=False, start_first_complete_minute=False, chunksize=1_000_000):
     """
     Nearest neighbor resampling. For downsampling, it is recommended to first
     apply an antialiasing filter (e.g. a low-pass filter, see ``lowpass``).
@@ -102,6 +102,10 @@ def resample(data, sample_rate, dropna=False, chunksize=1_000_000):
     :type sample_rate: int or float
     :param dropna: Whether to drop NaN values after resampling. Defaults to False.
     :type dropna: bool, optional
+    :param start_first_complete_minute: Whether to start data from the first complete minute.
+        Uses 1 second tolerance - if within 1 second of minute boundary, uses that minute,
+        otherwise advances to next minute. Defaults to False.
+    :type start_first_complete_minute: bool, optional
     :param chunksize: Chunk size for chunked processing. Defaults to 1_000_000 rows.
     :type chunksize: int, optional
     :return: Processed data and processing info.
@@ -120,6 +124,25 @@ def resample(data, sample_rate, dropna=False, chunksize=1_000_000):
     info['ResampleRate'] = sample_rate
 
     t0, tf = data.index[0], data.index[-1]
+
+    # Start from first complete minute if specified
+    if start_first_complete_minute and len(data) > 0:
+        # Check how far we are from the start of the minute
+        seconds_into_minute = t0.second + t0.microsecond / 1_000_000
+
+        if seconds_into_minute < 1.0:
+            # Within 1 second of the minute boundary, use this minute
+            t0 = t0.replace(second=0, microsecond=0)
+        else:
+            # More than 1 second into the minute, advance to next minute
+            t0 = t0.replace(second=0, microsecond=0) + pd.Timedelta(minutes=1)
+
+        # Trim data to start from the adjusted time
+        data = data.loc[t0:]
+        if len(data) == 0:
+            return data, info
+        tf = data.index[-1]
+        info['FirstCompleteMinuteStart'] = t0.strftime("%Y-%m-%d %H:%M:%S")
     nt = int(np.around((tf - t0).total_seconds() * sample_rate)) + 1  # integer number of ticks we need
 
     # # In-memory version

@@ -13,6 +13,8 @@ def main():
     parser.add_argument('--end_time', default=None, type=str)
     parser.add_argument('--skipdays', default=0, type=int)
     parser.add_argument('--cutdays', default=0, type=int)
+    parser.add_argument('--start_first_complete_minute', action='store_true',
+                        help='Start data from first complete minute (1 second tolerance)')
     args = parser.parse_args()
 
     data, info = actipy.read_device(
@@ -25,6 +27,7 @@ def main():
         end_time=args.end_time,
         skipdays=args.skipdays,
         cutdays=args.cutdays,
+        start_first_complete_minute=args.start_first_complete_minute,
         verbose=True
     )
 
