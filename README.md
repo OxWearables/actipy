@@ -11,21 +11,21 @@ as well as custom CSV files.
 Axivity3 is the activity tracker watch used in the large-scale
 [UK-Biobank accelerometer study](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0169649).
 
-## Getting started
+## 🚀 Getting started
 
 ### Prerequisite
 
-- Python 3.8 or greater
+- 🐍 Python 3.8 or greater
     ```console
     $ python --version  # or python3 --version
     ```
 
-- Java 8 (1.8.0) or greater
+- ☕ Java 8 (1.8.0) or greater
     ```console
     $ java -version
     ```
 
-### Install
+### 📦 Install
 
 ```bash
 $ pip install actipy
@@ -36,7 +36,7 @@ $ pip install actipy
 $ conda install -c oxwear actipy
 ``` -->
 
-## Usage
+## 📖 Usage
 
 ```python
 import actipy
@@ -85,9 +85,9 @@ info [dict]
  ...
 
 ```
-Refer to the [Glossary](GLOSSARY.md) for a comprehensive list of outputs.
+📚 Refer to the [Glossary](GLOSSARY.md) for a comprehensive list of outputs.
 
-### Optional parameters
+### ⚙️ Optional parameters
 
 You can also specify time ranges and additional options:
 
@@ -108,7 +108,7 @@ data, info = actipy.read_device(
 )
 ```
 
-### Processing a custom CSV file
+### 📊 Processing a custom CSV file
 You can also use the routines in `actipy.processing` to process custom CSV files, or for more fine-grained control:
 
 ```python
@@ -122,20 +122,20 @@ data, info_resample = P.resample(data, 50)
 
 See the [documentation](https://actipy.readthedocs.io/en/latest/) for more.
 
-### Processing from the command line
+### 💻 Processing from the command line
 We also provide a command-line tool to process a device file (currently, only AX3 and AX6 are supported) and output to CSV:
 ```bash
 $ read_cwa sample.cwa.gz -o outputs --lowpass-hz 20 --resample-hz 50 --calibrate-gravity --detect-nonwear
 ```
 
 Outputs:
-  - "outputs/sample/sample.csv.gz"
-  - "outputs/sample/sample-Info.json"
+  - 📄 `outputs/sample/sample.csv.gz`
+  - 📋 `outputs/sample/sample-Info.json`
 
 
-## Contributing
+## 🤝 Contributing
 If you would like to contribute to this repository, please check out [CONTRIBUTING.md](https://github.com/OxWearables/actipy/blob/main/CONTRIBUTING.md).
 We welcome contributions in the form of bug reports, feature requests, and pull requests. 
 
-## License
+## 📜 License
 See [LICENSE.md](LICENSE.md).
