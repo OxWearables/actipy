@@ -1,3 +1,36 @@
+"""
+Signal processing functions for accelerometer data.
+
+This module provides a suite of signal processing operations for cleaning,
+calibrating, and analyzing accelerometer time-series data. All functions
+operate on pandas DataFrames with DateTimeIndex and return both processed
+data and metadata dictionaries.
+
+Main Processing Functions
+-------------------------
+quality_control : Basic data quality checks and statistics
+lowpass : Butterworth lowpass filtering
+calibrate_gravity : Gravity-based calibration (van Hees et al. 2014)
+flag_nonwear : Detect and flag non-wear periods
+resample : Nearest-neighbor resampling to uniform frequency
+
+Utility Functions
+-----------------
+find_nonwear_segments : Identify non-wear periods without flagging data
+butterfilt : Butterworth filter implementation
+chunker : Generator for processing data in time-based chunks
+
+Memory Efficiency
+-----------------
+Functions that process large datasets (lowpass, calibrate_gravity, resample)
+use chunked processing and memory-mapped temporary files to minimize RAM usage.
+
+Notes
+-----
+All functions preserve the input DataFrame structure and return tuples of
+(processed_data, info_dict) where info_dict contains processing metadata.
+"""
+
 import os
 import tempfile
 import numpy as np

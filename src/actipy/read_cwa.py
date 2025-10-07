@@ -1,3 +1,43 @@
+"""
+Command-line interface for processing accelerometer device files.
+
+This script provides a command-line tool (read_cwa) for reading and processing
+accelerometer data from device files. Despite the name 'read_cwa', it supports
+multiple device formats.
+
+Supported Formats
+-----------------
+- Axivity AX3/AX6 (.cwa)
+- Actigraph (.gt3x)
+- GENEActiv (.bin)
+- Matrix (.bin)
+
+Usage
+-----
+Basic usage with default processing:
+
+    $ read_cwa sample.cwa.gz -o outputs/
+
+With custom processing options:
+
+    $ read_cwa sample.cwa.gz -o outputs/ --lowpass-hz 20 --resample-hz 50 \\
+      --calibrate-gravity --detect-nonwear
+
+Time filtering:
+
+    $ read_cwa sample.cwa.gz -o outputs/ --start-time "2014-05-07 18:00:00" \\
+      --end-time "2014-05-09 18:00:00" --skipdays 1 --cutdays 2
+
+Output
+------
+Creates two files in the output directory:
+- {basename}.csv.gz : Processed acceleration data
+- {basename}-Info.json : Processing metadata and statistics
+
+For full option list, run:
+    $ read_cwa --help
+"""
+
 import time
 from pathlib import Path
 import argparse
@@ -8,16 +48,6 @@ import json
 # from tqdm import tqdm
 
 from actipy import read_device
-
-"""
-How to run the script:
-
-```bash
-python src/actipy/read_cwa.py data/test.bin 
-
-python src/actipy/read_cwa.py data/test.bin -o data/prepared/ -r 30 -g -f 20 -w -c x y z -q
-```
-"""
 
 
 def main():

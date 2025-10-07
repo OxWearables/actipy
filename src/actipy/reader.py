@@ -1,3 +1,33 @@
+"""
+Device file reader and high-level processing pipeline.
+
+This module provides functions to read accelerometer data from various device
+formats and apply a full processing pipeline including filtering, calibration,
+nonwear detection, and resampling.
+
+Supported Devices
+-----------------
+- Axivity AX3/AX6 (.cwa files)
+- Actigraph (.gt3x files)
+- GENEActiv (.bin files)
+- Matrix (.bin files)
+
+Main Functions
+--------------
+read_device : Read device file and apply processing pipeline
+process : Apply processing pipeline to existing DataFrame
+
+The module uses Java-based parsers for most device types (via subprocess calls),
+and a pure Python parser for Matrix devices. All parsers output data in a
+consistent pandas DataFrame format with a DateTimeIndex.
+
+Notes
+-----
+- Files can be compressed (.gz, .zip) and will be automatically decompressed
+- Processing is memory-efficient using chunked operations for large files
+- Temporary files are created during parsing and cleaned up automatically
+"""
+
 import os
 import time
 import struct
@@ -31,42 +61,113 @@ def read_device(input_file,
                 flag_nonwear_kwargs=None,
                 verbose=True):
     """
-    Read and process accelerometer device file. Returns a pandas.DataFrame with
-    the processed data and a dict with processing info.
+    Read and process accelerometer device file.
 
-    :param input_file: Path to accelerometer file.
+    This is the main entry point for reading device files. It performs the full
+    processing pipeline: file parsing, quality control, lowpass filtering,
+    gravity calibration, nonwear detection, and resampling.
+
+    :param input_file: Path to accelerometer file (.cwa, .gt3x, .bin).
+        Compressed files (.gz, .zip) are automatically decompressed.
     :type input_file: str
-    :param lowpass_hz: Cutoff (Hz) for low-pass filter. Defaults to 20. Pass
-        None or False to disable.
-    :type lowpass_hz: int, optional
-    :param calibrate_gravity: Whether to perform gravity calibration. Defaults to True.
+    :param lowpass_hz: Cutoff frequency (Hz) for Butterworth lowpass filter.
+        Defaults to 20 Hz. Pass None or False to disable filtering.
+    :type lowpass_hz: int or False, optional
+    :param calibrate_gravity: Whether to perform gravity calibration using the
+        method of van Hees et al. 2014. Defaults to True.
     :type calibrate_gravity: bool, optional
-    :param detect_nonwear: Whether to perform non-wear detection. Defaults to True.
+    :param detect_nonwear: Whether to detect and flag non-wear periods (long
+        stationary periods). Defaults to True.
     :type detect_nonwear: bool, optional
     :param resample_hz: Target frequency (Hz) to resample the signal. If
-        "uniform", use the implied frequency (use this option to fix any device
-        sampling errors). Pass None to disable. Defaults to "uniform".
-    :type resample_hz: str or int, optional
-    :param start_time: Start time to read data. Pass None to read from the
-        beginning. Defaults to None.
+        "uniform", uses the device's sample rate to fix sampling errors. Pass
+        None or False to disable. Defaults to "uniform".
+    :type resample_hz: str or int or False, optional
+    :param start_time: Start time to read data (ISO format: "YYYY-MM-DD HH:MM:SS").
+        Pass None to read from the beginning. Defaults to None.
     :type start_time: str or datetime, optional
-    :param end_time: End time to read data. Pass None to read until the end.
-        Defaults to None.
+    :param end_time: End time to read data (ISO format: "YYYY-MM-DD HH:MM:SS").
+        Pass None to read until the end. Defaults to None.
     :type end_time: str or datetime, optional
     :param skipdays: Number of days to skip from the beginning. Defaults to 0.
     :type skipdays: int, optional
     :param cutdays: Number of days to cut from the end. Defaults to 0.
     :type cutdays: int, optional
-    :param start_first_complete_minute: Whether to start data from the first complete minute. Defaults to False.
+    :param start_first_complete_minute: Whether to start data from the first
+        complete minute (with 1 second tolerance). Useful for aligning data to
+        minute boundaries. Defaults to False.
     :type start_first_complete_minute: bool, optional
-    :param calibrate_gravity_kwargs: Additional keyword arguments to pass to calibrate_gravity function. Defaults to None.
+    :param calibrate_gravity_kwargs: Additional keyword arguments for the
+        calibrate_gravity function (e.g., {'stdtol_min': 0.01}). Defaults to None.
     :type calibrate_gravity_kwargs: dict, optional
-    :param flag_nonwear_kwargs: Additional keyword arguments to pass to flag_nonwear function. Defaults to None.
+    :param flag_nonwear_kwargs: Additional keyword arguments for the flag_nonwear
+        function (e.g., {'patience': '60m'}). Defaults to None.
     :type flag_nonwear_kwargs: dict, optional
-    :param verbose: Verbosity, defaults to True.
+    :param verbose: Print progress messages. Defaults to True.
     :type verbose: bool, optional
-    :return: Processed data and processing info.
-    :rtype: (pandas.DataFrame, dict)
+    :return: A tuple (data, info) where:
+
+        - **data** (pandas.DataFrame): Processed acceleration time-series with
+          DateTimeIndex and columns for x, y, z acceleration (in g), plus
+          optional temperature and light data depending on device type.
+        - **info** (dict): Processing metadata including device information,
+          quality metrics, calibration results, and processing parameters.
+          See GLOSSARY.md for complete field descriptions.
+    :rtype: tuple(pandas.DataFrame, dict)
+
+    Examples
+    --------
+    Basic usage with default processing:
+
+    >>> import actipy
+    >>> data, info = actipy.read_device("sample.cwa.gz")
+    >>> print(data.head())
+                                 x         y         z  temperature    light
+    time
+    2014-05-07 13:29:50.430 -0.514     0.070     1.672        20.0    78.42
+    2014-05-07 13:29:50.440 -0.234    -0.587     0.082        20.0    78.42
+    ...
+
+    With custom processing options:
+
+    >>> data, info = actipy.read_device(
+    ...     "sample.cwa.gz",
+    ...     lowpass_hz=20,
+    ...     calibrate_gravity=True,
+    ...     detect_nonwear=True,
+    ...     resample_hz=50
+    ... )
+
+    Time filtering and alignment:
+
+    >>> data, info = actipy.read_device(
+    ...     "sample.cwa.gz",
+    ...     start_time="2014-05-07 18:00:00",
+    ...     end_time="2014-05-09 18:00:00",
+    ...     skipdays=1,
+    ...     cutdays=2,
+    ...     start_first_complete_minute=True
+    ... )
+
+    Custom calibration parameters:
+
+    >>> data, info = actipy.read_device(
+    ...     "sample.cwa.gz",
+    ...     calibrate_gravity=True,
+    ...     calibrate_gravity_kwargs={'stdtol_min': 0.01, 'calib_cube': 0.5}
+    ... )
+
+    See Also
+    --------
+    process : Apply processing pipeline to existing DataFrame
+    actipy.processing : Individual processing functions for fine-grained control
+
+    Notes
+    -----
+    - Supported formats: Axivity (.cwa), Actigraph (.gt3x), GENEActiv (.bin), Matrix (.bin)
+    - Processing is memory-efficient using chunked operations for large files
+    - The info dict is progressively updated as each processing step completes
+    - Non-wear periods are set to NaN if detect_nonwear=True
     """
 
     timer = Timer(verbose)
@@ -148,37 +249,79 @@ def process(data, sample_rate,
             flag_nonwear_kwargs=None,
             verbose=True):
     """
-    Process a pandas.DataFrame of acceleration time-series. Returns a
-    pandas.DataFrame with the processed data and a dict with processing info.
+    Apply processing pipeline to acceleration time-series DataFrame.
 
-    :param data: A pandas.DataFrame of acceleration time-series. It must contain
-        at least columns `x,y,z` and the index must be a DateTimeIndex.
-    :type data: pandas.DataFrame.
-    :param sample_rate: The data's sample rate (Hz).
+    This function applies the same processing steps as read_device() but to an
+    existing pandas DataFrame. Useful for processing custom CSV files or data
+    from sources not directly supported by read_device().
+
+    :param data: A pandas.DataFrame of acceleration time-series. Must contain
+        at least columns 'x', 'y', 'z' (acceleration in g) and the index must
+        be a DateTimeIndex.
+    :type data: pandas.DataFrame
+    :param sample_rate: The data's sample rate in Hz.
     :type sample_rate: int or float
-    :param lowpass_hz: Cutoff (Hz) for low-pass filter. Defaults to 20. Pass
-        None or False to disable.
-    :type lowpass_hz: int, optional
-    :param calibrate_gravity: Whether to perform gravity calibration. Defaults to True.
+    :param lowpass_hz: Cutoff frequency (Hz) for Butterworth lowpass filter.
+        Defaults to 20 Hz. Pass None or False to disable filtering.
+    :type lowpass_hz: int or False, optional
+    :param calibrate_gravity: Whether to perform gravity calibration using the
+        method of van Hees et al. 2014. Defaults to True.
     :type calibrate_gravity: bool, optional
-    :param detect_nonwear: Whether to perform non-wear detection. Defaults to True.
+    :param detect_nonwear: Whether to detect and flag non-wear periods (long
+        stationary periods). Defaults to True.
     :type detect_nonwear: bool, optional
     :param resample_hz: Target frequency (Hz) to resample the signal. If
-        "uniform", use the implied frequency (use this option to fix any device
-        sampling errors). Pass None to disable. Defaults to "uniform".
-    :type resample_hz: str or int, optional
-    :param start_first_complete_minute: Whether to start data from the first complete minute.
-        Uses 1 second tolerance - if within 1 second of minute boundary, uses that minute,
-        otherwise advances to next minute. Defaults to False.
+        "uniform", uses the provided sample_rate to fix sampling errors. Pass
+        None or False to disable. Defaults to "uniform".
+    :type resample_hz: str or int or False, optional
+    :param start_first_complete_minute: Whether to start data from the first
+        complete minute (with 1 second tolerance). Useful for aligning data to
+        minute boundaries. Defaults to False.
     :type start_first_complete_minute: bool, optional
-    :param calibrate_gravity_kwargs: Additional keyword arguments to pass to calibrate_gravity function. Defaults to None.
+    :param calibrate_gravity_kwargs: Additional keyword arguments for the
+        calibrate_gravity function (e.g., {'stdtol_min': 0.01}). Defaults to None.
     :type calibrate_gravity_kwargs: dict, optional
-    :param flag_nonwear_kwargs: Additional keyword arguments to pass to flag_nonwear function. Defaults to None.
+    :param flag_nonwear_kwargs: Additional keyword arguments for the flag_nonwear
+        function (e.g., {'patience': '60m'}). Defaults to None.
     :type flag_nonwear_kwargs: dict, optional
-    :param verbose: Verbosity, defaults to True.
+    :param verbose: Print progress messages. Defaults to True.
     :type verbose: bool, optional
-    :return: Processed data and processing info.
-    :rtype: (pandas.DataFrame, dict)
+    :return: A tuple (data, info) where:
+
+        - **data** (pandas.DataFrame): Processed acceleration time-series
+        - **info** (dict): Processing metadata. See GLOSSARY.md for field descriptions.
+    :rtype: tuple(pandas.DataFrame, dict)
+
+    Examples
+    --------
+    Process a CSV file:
+
+    >>> import pandas as pd
+    >>> import actipy
+    >>> data = pd.read_csv("custom_data.csv", parse_dates=['time'], index_col='time')
+    >>> data, info = actipy.process(data, sample_rate=100)
+
+    Apply specific processing steps:
+
+    >>> data, info = actipy.process(
+    ...     data,
+    ...     sample_rate=100,
+    ...     lowpass_hz=20,
+    ...     calibrate_gravity=True,
+    ...     detect_nonwear=False,
+    ...     resample_hz=50
+    ... )
+
+    See Also
+    --------
+    read_device : Read and process device file in one step
+    actipy.processing : Individual processing functions for more control
+
+    Notes
+    -----
+    - Input data must have DateTimeIndex and columns 'x', 'y', 'z'
+    - Optional columns 'temperature', 'light' are preserved if present
+    - Processing is memory-efficient using chunked operations
     """
 
     timer = Timer(verbose)

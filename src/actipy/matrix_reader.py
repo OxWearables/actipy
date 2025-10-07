@@ -1,3 +1,39 @@
+"""
+Binary file reader for Matrix wearable devices.
+
+This module provides a pure Python implementation for reading and parsing
+binary data files from Matrix wearable devices. Unlike other device readers
+in actipy, this does not use Java parsers.
+
+Binary File Structure
+---------------------
+Matrix .bin files consist of:
+1. Remarks block (512 bytes) - metadata text
+2. File header (16 bytes) - signature, packet count, sensor ranges
+3. Data packets - each containing timestamped sensor readings
+
+Each packet contains:
+- Header: CRC32 checksum, timestamps, sample counts
+- Payload: Accelerometer, gyroscope, temperature, heart rate data
+
+Main Functions
+--------------
+bin2csv : Convert Matrix .bin file to CSV format
+extract_metadata : Read file metadata without processing full dataset
+is_matrix_bin_file : Check if file is a valid Matrix binary file
+
+Notes
+-----
+- Supports compressed files (.gz, .zip, .tar.gz, .tgz)
+- Validates data integrity using CRC32 checksums
+- Resamples multi-rate sensor data to uniform time grid
+- Progress tracking via tqdm progress bars
+
+See Also
+--------
+Binary format documentation: Matrix wearable device specification
+"""
+
 import os
 import logging
 import struct
