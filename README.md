@@ -73,7 +73,7 @@ info [dict]
  NumTicks                 : 51391800
  WearTime(days)           : 5.847725231481482
  NumInterrupts            : 1
- ResampleRate             : 100.0
+ ResampleRate             : 50
  NumTicksAfterResample    : 25262174
  LowpassOK                : 1
  LowpassCutoff(Hz)        : 20.0
@@ -87,6 +87,27 @@ info [dict]
 ```
 Refer to the [Glossary](GLOSSARY.md) for a comprehensive list of outputs.
 
+### Optional parameters
+
+You can also specify time ranges and additional options:
+
+```python
+data, info = actipy.read_device(
+    "sample.cwa.gz",
+    lowpass_hz=20,
+    calibrate_gravity=True,
+    detect_nonwear=True,
+    resample_hz=50,
+    start_time="2014-05-07 18:00:00",  # Start time (ISO format)
+    end_time="2014-05-09 18:00:00",    # End time (ISO format)
+    skipdays=1,                         # Skip first day
+    cutdays=2,                          # Cut last 2 days
+    start_first_complete_minute=True,  # Align to minute boundaries
+    calibrate_gravity_kwargs={'stdtol_min': 0.01},  # Custom calibration params
+    flag_nonwear_kwargs={'patience': '60m'}         # Custom nonwear params
+)
+```
+
 ### Processing a custom CSV file
 You can also use the routines in `actipy.processing` to process custom CSV files, or for more fine-grained control:
 
@@ -96,7 +117,7 @@ import actipy.processing as P
 data, info_lowpass = P.lowpass(data, 100, 20)
 data, info_calib = P.calibrate_gravity(data)
 data, info_nonwear = P.flag_nonwear(data)
-data, info_resample = P.resample(data, sample_rate)
+data, info_resample = P.resample(data, 50)
 ```
 
 See the [documentation](https://actipy.readthedocs.io/en/latest/) for more.
