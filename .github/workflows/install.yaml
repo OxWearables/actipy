@@ -29,12 +29,32 @@ jobs:
           distribution: 'zulu'
           java-version: '8'
 
-      - name: Compile java files
+      - name: Compile java files (Unix)
+        if: runner.os != 'Windows'
         run: |
+          set -e
           java -version
           javac src/actipy/*.java
 
-      - name: Pip install this
+      - name: Compile java files (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+          java -version
+          javac src\actipy\*.java
+
+      - name: Pip install this (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          set -e
+          python -m pip install --upgrade pip
+          python -m pip install .[dev,docs]
+
+      - name: Pip install this (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
           python -m pip install --upgrade pip
           python -m pip install .[dev,docs]

@@ -33,6 +33,7 @@ jobs:
 
       - name: Compile Java files
         run: |
+          set -e
           java -version
           javac src/actipy/*.java
 
@@ -44,12 +45,14 @@ jobs:
 
       - name: Build source and wheel distributions
         run: |
+          set -e
           python -m pip install --upgrade pip wheel twine tomli
           python setup.py sdist bdist_wheel
           twine check --strict dist/*
 
       - name: Sanity check build
         run: |
+          set -e
           python -m pip install dist/*.gz
           python -c "import actipy; print(actipy.__version__)"
 
@@ -70,6 +73,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ github.ref_name }}
         run: |
+          set -e
           gh release create "$tag" \
               --repo="$GITHUB_REPOSITORY" \
               --title="${GITHUB_REPOSITORY#*/} ${tag#v}" \
