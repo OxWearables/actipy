@@ -85,7 +85,7 @@ info [dict]
  ...
 
 ```
-Refer to the [Data Dictionary](data-dictionary.md) for a comprehensive list of outputs.
+Refer to the [Glossary](GLOSSARY.md) for a comprehensive list of outputs.
 
 ### Processing a custom CSV file
 You can also use the routines in `actipy.processing` to process custom CSV files, or for more fine-grained control:
