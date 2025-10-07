@@ -31,17 +31,20 @@ jobs:
 
       - name: Compile java files
         run: |
+          set -e
           java -version
           javac src/actipy/*.java
 
       - name: Install dependencies
         run: |
+          set -e
           python -m pip install --upgrade pip
           python -m pip install .
           python -m pip install pytest joblib
 
       - name: Download test files
         run: |
+          set -e
           wget -P tests/data/ https://wearables-files.ndph.ox.ac.uk/files/data/samples/ax3/tiny-sample.cwa.gz --quiet
           wget -P tests/data/ https://wearables-files.ndph.ox.ac.uk/files/actipy/tests/data/read.csv.gz --quiet
           wget -P tests/data/ https://wearables-files.ndph.ox.ac.uk/files/actipy/tests/data/lowpass.csv.gz --quiet
@@ -53,4 +56,5 @@ jobs:
 
       - name: Test with pytest
         run: |
+          set -e
           pytest tests/

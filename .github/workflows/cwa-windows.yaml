@@ -30,18 +30,24 @@ jobs:
           java-version: '8'
 
       - name: Compile java files
+        shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           java -version
           javac src\actipy\*.java
 
       - name: Install dependencies
+        shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           python -m pip install --upgrade pip
           python -m pip install .
           python -m pip install pytest joblib
 
       - name: Download test file
+        shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           mkdir tests\data
           curl --output-dir tests\data\ -O https://wearables-files.ndph.ox.ac.uk/files/data/samples/ax3/tiny-sample.cwa.gz
           curl --output-dir tests\data\ -O https://wearables-files.ndph.ox.ac.uk/files/actipy/tests/data/read.csv.gz
@@ -53,7 +59,9 @@ jobs:
           copy tests\data\tiny-sample.cwa.gz tests\data\tiny-sample2.cwa.gz
 
       - name: Test with pytest
+        shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           echo "########## NOTE ##########"
           echo "Windows access violation error can be safely ignored. See: https://github.com/jpype-project/jpype/issues/561"
           pytest tests
