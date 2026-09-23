@@ -279,6 +279,8 @@ def lowpass(data, data_sample_rate, cutoff_rate=20, chunksize=1_000_000):
 
             chunk = data.iloc[istart : istop]
             xyz = chunk[['x', 'y', 'z']].to_numpy()
+            if not xyz.flags.writeable:
+                xyz = xyz.copy()
             na = np.isnan(xyz).any(1)
             xyz[na] = 0.0  # temporarily replace nans with 0s for butterfilt
             xyz = butterfilt(xyz, cutoff_rate, fs=data_sample_rate, axis=0)
