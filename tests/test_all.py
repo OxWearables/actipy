@@ -159,7 +159,7 @@ def read_device(
 
 def read_csv(fpath):
     """ Read a CSV file. """
-    return pd.read_csv(
+    data = pd.read_csv(
         fpath,
         parse_dates=['time'], index_col='time',
         dtype={
@@ -170,3 +170,5 @@ def read_csv(fpath):
             'light': 'f4'
         }
     )
+    data.index = data.index.astype('datetime64[ns]')
+    return data
