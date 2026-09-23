@@ -614,15 +614,12 @@ def get_gt3x_id(gt3xfile):
     assert gt3xfile.lower().endswith(".gt3x") and zipfile.is_zipfile(gt3xfile), f"Cannot get device id for {gt3xfile}"
 
     with zipfile.ZipFile(gt3xfile, 'r') as z:
-        contents = z.infolist()
-
-        if 'info.txt' in map(lambda x: x.filename, contents):
-            info_file = z.open('info.txt', 'r')
-            for line in info_file:
-                if line.startswith(b"Serial Number:"):
-                    newline = line.decode("utf-8")
-                    newline = newline.split("Serial Number: ")[1]
-                    return newline
+        if 'info.txt' in z.namelist():
+            with z.open('info.txt', 'r') as info_file:
+                for line in info_file:
+                    newline = line.decode("utf-8-sig").strip()
+                    if newline.startswith("Serial Number:"):
+                        return newline.split(":", 1)[1].strip()
         else:
             print("Could not find info.txt file")
             return "unknown"

@@ -5,6 +5,7 @@ import java.io.FileWriter;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Date;
 import java.util.Enumeration;
@@ -25,6 +26,10 @@ public class ActigraphReader {
     private static final int VALID_GT3_V1_FILE = 1;
     private static final int VALID_GT3_V2_FILE = 2;
     private static final int GT3_HEADER_SIZE = 8;
+    private static final double MIN_ACCELERATION_SCALE = 16.0;
+    private static final double MAX_ACCELERATION_SCALE = 32768.0;
+    private static final double MIN_RAW_FULL_SCALE = 1024.0;
+    private static final double MAX_RAW_FULL_SCALE = 32768.0;
 
     // Specification of items to be written
     private static final Map<String, String> ITEM_NAMES_AND_TYPES;
@@ -90,7 +95,7 @@ public class ActigraphReader {
 
         int statusOK = -1;
         double sampleRate = -1;
-        int errCounter = -1;  // currently not used
+        int errCounter = 0;  // currently not used
         ZipFile zip = null;
         // readers for the 'activity.bin' & 'info.txt' files inside the .zip
         BufferedReader infoReader = null;
@@ -111,7 +116,8 @@ public class ActigraphReader {
             for (Enumeration<?> e = zip.entries(); e.hasMoreElements();) {
                 ZipEntry entry = (ZipEntry) e.nextElement();
                 if (entry.toString().equals("info.txt")) {
-                    infoReader = new BufferedReader(new InputStreamReader(zip.getInputStream(entry)));
+                    infoReader = new BufferedReader(new InputStreamReader(
+                            zip.getInputStream(entry), StandardCharsets.UTF_8));
                 } else if (entry.toString().equals("activity.bin") && gt3Version == VALID_GT3_V1_FILE) {
                     activityReader = zip.getInputStream(entry);
                 } else if (entry.toString().equals("log.bin") && gt3Version == VALID_GT3_V2_FILE) {
@@ -119,8 +125,9 @@ public class ActigraphReader {
                 }
             }
 
-            // underscored are unused for now
-            double accelerationScale = -1, _AccelerationMin, _AccelerationMax;
+            double accelerationScale = -1;
+            double accelerationMin = Double.NaN, accelerationMax = Double.NaN;
+            boolean accelerationScalePresent = false;
             long startDate = -1, stopDate = -1, firstSampleTime=-1;
             String serialNumber = "";
             String infoTimeShift = "00:00:00"; // default to be UTC time difference
@@ -130,21 +137,26 @@ public class ActigraphReader {
                 if (line!=null){
                     String[] tokens=line.split(": ");
                     if ((tokens !=null)  && (tokens.length==2)){
-                        if (tokens[0].trim().equals("Sample Rate"))
+                        String key = tokens[0].trim();
+                        if (key.startsWith("\uFEFF"))
+                            key = key.substring(1).trim();
+
+                        if (key.equals("Sample Rate"))
                             sampleRate=Integer.parseInt(tokens[1].trim());
-                        else if (tokens[0].trim().equals("Start Date"))
+                        else if (key.equals("Start Date"))
                             firstSampleTime=GT3XfromTickToMillisecond(Long.parseLong(tokens[1].trim()));
-                        else if (tokens[0].trim().equals("Acceleration Scale"))
+                        else if (key.equals("Acceleration Scale")) {
                             accelerationScale=Double.parseDouble(tokens[1].trim());
-                        else if (tokens[0].trim().equals("Acceleration Min"))
-                            _AccelerationMin=Double.parseDouble(tokens[1].trim());
-                        else if (tokens[0].trim().equals("Acceleration Max"))
-                            _AccelerationMax=Double.parseDouble(tokens[1].trim());
-                        else if (tokens[0].trim().equals("Stop Date"))
+                            accelerationScalePresent = true;
+                        } else if (key.equals("Acceleration Min"))
+                            accelerationMin=Double.parseDouble(tokens[1].trim());
+                        else if (key.equals("Acceleration Max"))
+                            accelerationMax=Double.parseDouble(tokens[1].trim());
+                        else if (key.equals("Stop Date"))
                             stopDate=GT3XfromTickToMillisecond(Long.parseLong(tokens[1].trim()));
-                        else if (tokens[0].trim().equals("Serial Number"))
+                        else if (key.equals("Serial Number"))
                             serialNumber=tokens[1].trim();
-                        else if (tokens[0].trim().equals("TimeZone"))
+                        else if (key.equals("TimeZone"))
                             infoTimeShift=tokens[1].trim(); // gt3x calls time shift as time zone
                     }
                 }
@@ -154,7 +166,15 @@ public class ActigraphReader {
             // System.out.println("Start date (local UNIX): " + startDate);
             // System.out.println("Stop date (local UNIX): " + stopDate);
 
-            accelerationScale = setAccelerationScale(serialNumber);
+            // Prefer a plausible scale recorded in info.txt. Older files and
+            // invalid metadata can use the known device-family fallback.
+            if (!isValidAccelerationScale(accelerationScale)
+                    || !isScaleConsistentWithRange(
+                            accelerationScale, accelerationMin, accelerationMax)) {
+                if (accelerationScalePresent)
+                    System.err.println("Ignoring invalid Acceleration Scale in " + accFile);
+                accelerationScale = setAccelerationScale(serialNumber);
+            }
 
             if ((sampleRate==-1 || accelerationScale==-1 || firstSampleTime==-1) && gt3Version != VALID_GT3_V2_FILE) {
                 System.err.println("Error parsing "+accFile+", info.txt must contain 'Sample Rate', ' Start Date', and (usually) 'Acceleration Scale'.");
@@ -326,13 +346,17 @@ public class ActigraphReader {
                             keyval = (int)(((keyPair[5] & 0xFF) << 8) ^ keyval);
                             keyval = (int)(((keyPair[6] & 0xFF) << 16) ^ keyval);
                             keyval = (int)(((keyPair[7] & 0xFF) << 24) ^ keyval);
-                            accelerationScale = decodePara(keyval);
+                            double parameterScale = decodePara(keyval);
+                            if (isValidAccelerationScale(parameterScale))
+                                accelerationScale = parameterScale;
                             // logger.log(Level.INFO, "accelerationScale changed to "+accelerationScale);
                         }
 
                         i += 7;
                     } else if (type == ACTIVITY_ID && size > 1) {
                         // when Size = 1, it is a USB connection event thus ignore.
+                        if (!isValidAccelerationScale(accelerationScale))
+                            throw new IllegalStateException("No valid acceleration scale found in GT3X metadata");
                         int [] res = processActivity(
                                 infoTimeShift,
                                 sampleRate,
@@ -349,6 +373,8 @@ public class ActigraphReader {
                         checkSum = res[1];
                     } else if (type == ACTIVITY2_ID && size > 1) {
                         // when Size = 1, it is a USB connection event thus ignore.
+                        if (!isValidAccelerationScale(accelerationScale))
+                            throw new IllegalStateException("No valid acceleration scale found in GT3X metadata");
                         int [] res = processActivity2(
                                 infoTimeShift,
                                 sampleRate,
@@ -698,6 +724,31 @@ public class ActigraphReader {
             accelerationScale = ACCELERATION_SCALE_FACTOR_MOS;
         }
         return accelerationScale;
+    }
+
+    private static boolean isValidAccelerationScale(double accelerationScale) {
+        return Double.isFinite(accelerationScale)
+                && accelerationScale >= MIN_ACCELERATION_SCALE
+                && accelerationScale <= MAX_ACCELERATION_SCALE;
+    }
+
+
+    private static boolean isScaleConsistentWithRange(
+            double accelerationScale,
+            double accelerationMin,
+            double accelerationMax) {
+        if (Double.isNaN(accelerationMin) || Double.isNaN(accelerationMax))
+            return true;
+        if (!Double.isFinite(accelerationMin)
+                || !Double.isFinite(accelerationMax)
+                || accelerationMin >= 0
+                || accelerationMax <= 0)
+            return false;
+
+        double range = Math.max(Math.abs(accelerationMin), Math.abs(accelerationMax));
+        double rawFullScale = accelerationScale * range;
+        return rawFullScale >= MIN_RAW_FULL_SCALE
+                && rawFullScale <= MAX_RAW_FULL_SCALE;
     }
 
 

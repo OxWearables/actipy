@@ -1,4 +1,9 @@
-from functools import lru_cache
+from functools import lru_cache, reduce
+import operator
+import struct
+import zipfile
+
+import numpy as np
 from pytest import approx
 import pandas as pd
 import joblib
@@ -33,6 +38,92 @@ def test_read_device():
 
     data_ref = read_csv('tests/data/read.csv.gz')
     pd.testing.assert_frame_equal(data, data_ref, rtol=0.01)  # 1% tolerance
+
+
+def _write_gt3x(path, metadata, raw_xyz):
+    timestamp = 1_700_000_000
+    payload = struct.pack("<hhh", *raw_xyz)
+    header = struct.pack("<BBIH", 0x1E, 26, timestamp, len(payload))
+    checksum = (~reduce(operator.xor, header + payload)) & 0xFF
+
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("info.txt", metadata)
+        archive.writestr("log.bin", header + payload + bytes([checksum]))
+
+    return timestamp
+
+
+def _read_gt3x(path):
+    return actipy.read_device(
+        str(path),
+        lowpass_hz=None,
+        calibrate_gravity=False,
+        detect_nonwear=False,
+        resample_hz=None,
+        verbose=False,
+    )
+
+
+def test_read_actigraph_uses_metadata_scale(tmp_path):
+    """GT3X metadata scale supports new device serial families."""
+
+    gt3x_file = tmp_path / "sample.gt3x"
+    timestamp = _write_gt3x(
+        gt3x_file,
+        "\ufeffSerial Number: STM2E24245655\n"
+        "Sample Rate: 30\n"
+        "Start Date: 638355968000000000\n"
+        "Acceleration Min: -8.0\n"
+        "Acceleration Max: 8.0\n"
+        "Acceleration Scale: 256.0\n",
+        (256, -256, 128),
+    )
+    data, info = _read_gt3x(gt3x_file)
+
+    assert info["DeviceID"] == "STM2E24245655"
+    assert info["ReadErrors"] == 0
+    assert data.index[0] == pd.Timestamp(timestamp, unit="s")
+    np.testing.assert_allclose(data.iloc[0], [1.0, -1.0, 0.5])
+
+
+def test_read_actigraph_bom_preserves_legacy_scale_fallback(tmp_path):
+    """A BOM must not hide the serial used by legacy scale fallback."""
+
+    gt3x_file = tmp_path / "bom-legacy.gt3x"
+    _write_gt3x(
+        gt3x_file,
+        "\ufeffSerial Number: NEO123\n"
+        "Sample Rate: 30\n"
+        "Start Date: 638355968000000000\n"
+        "Acceleration Min: -6.0\n"
+        "Acceleration Max: 6.0\n",
+        (341, -341, 0),
+    )
+    data, info = _read_gt3x(gt3x_file)
+
+    assert info["DeviceID"] == "NEO123"
+    assert info["ReadErrors"] == 0
+    np.testing.assert_allclose(data.iloc[0], [1.0, -1.0, 0.0])
+
+
+def test_read_actigraph_replaces_implausible_metadata_scale(tmp_path):
+    """A corrupt positive scale must not silently produce extreme g values."""
+
+    gt3x_file = tmp_path / "invalid-scale.gt3x"
+    _write_gt3x(
+        gt3x_file,
+        "Serial Number: NEO123\n"
+        "Sample Rate: 30\n"
+        "Start Date: 638355968000000000\n"
+        "Acceleration Min: -6.0\n"
+        "Acceleration Max: 6.0\n"
+        "Acceleration Scale: 1.0\n",
+        (341, -341, 0),
+    )
+    data, info = _read_gt3x(gt3x_file)
+
+    assert info["ReadErrors"] == 0
+    np.testing.assert_allclose(data.iloc[0], [1.0, -1.0, 0.0])
 
 
 def test_lowpass():
