@@ -277,7 +277,7 @@ public class ActigraphReader {
                             date = (long)(((current & 0xFF) << 16) ^ date);
                             break;
                         case 5:
-                            date = (long)(((current & 0xFF) << 24) ^ date);
+                            date = ((long)(current & 0xFF) << 24) ^ date;
                             break;
                         case 6:
                             size = (int)(current & 0xFF);
@@ -312,7 +312,7 @@ public class ActigraphReader {
 
                         // set acceleration scale if present
                         if (isAccelScale(keyPair)) {
-                            int keyval = keyPair[4];
+                            int keyval = keyPair[4] & 0xFF;
                             keyval = (int)(((keyPair[5] & 0xFF) << 8) ^ keyval);
                             keyval = (int)(((keyPair[6] & 0xFF) << 16) ^ keyval);
                             keyval = (int)(((keyPair[7] & 0xFF) << 24) ^ keyval);
