@@ -31,7 +31,7 @@ public class ActigraphReader {
     private static final double MIN_RAW_FULL_SCALE = 1024.0;
     private static final double MAX_RAW_FULL_SCALE = 32768.0;
 
-    // Specification of items to be written
+    // Keep field order aligned with NpyWriter's primitive row layouts.
     private static final Map<String, String> ITEM_NAMES_AND_TYPES;
     static{
         Map<String, String> itemNamesAndTypes = new LinkedHashMap<String, String>();
@@ -39,31 +39,17 @@ public class ActigraphReader {
         itemNamesAndTypes.put("x", "Float");
         itemNamesAndTypes.put("y", "Float");
         itemNamesAndTypes.put("z", "Float");
-        // itemNamesAndTypes.put("temperature", "Double");
-        // itemNamesAndTypes.put("lux", "Integer");
         ITEM_NAMES_AND_TYPES = Collections.unmodifiableMap(itemNamesAndTypes);
     }
 
-    // Doesn't work with jpype for some reason
-    // private static Logger logger;
-    // static {
-    //     String path = ActigraphParser.class.getClassLoader()
-    //             .getResource("logging.properties")
-    //             .getFile();
-    //     System.setProperty("java.util.logging.config.file", path);
-    //     logger = Logger.getLogger(ActigraphParser.class.getName());
-    // }
-
     /**
-     * Reads a .gt3x file
-     * For v1, the .zip archive should contain least 3 files.
-     * For v2, the .zip arhive should contain only 2 files.
-     * This method first verifies if it is a valid v1/v2 file,
-     * it will then parse the header and begin processing the activity.bin file for v1
-     * and log.bin file for v2.
+     * Reads a .gt3x file.
+     * V1 archives contain activity.bin, lux.bin, and info.txt; V2 archives
+     * contain log.bin and info.txt. The method validates the archive, parses
+     * its metadata, and processes the corresponding data entry.
      *
-     * For the timestamp, since the gt3x uses .NET format even though
-     * the timestamp is saved in UNIX time format but it is local time.
+     * GT3X timestamps use .NET ticks to represent local time before the
+     * reader applies the recorded time-zone offset.
      * TODO: confirm the DST change
      */
     public static void main(String[] args) {
@@ -95,9 +81,9 @@ public class ActigraphReader {
 
         int statusOK = -1;
         double sampleRate = -1;
-        int errCounter = 0;  // currently not used
+        int errCounter = 0;  // Number of packet/read errors reported in metadata.
         ZipFile zip = null;
-        // readers for the 'activity.bin' & 'info.txt' files inside the .zip
+        // Readers for metadata and the version-specific payload entry.
         BufferedReader infoReader = null;
         InputStream activityReader = null;
 
@@ -130,7 +116,7 @@ public class ActigraphReader {
             boolean accelerationScalePresent = false;
             long startDate = -1, stopDate = -1, firstSampleTime=-1;
             String serialNumber = "";
-            String infoTimeShift = "00:00:00"; // default to be UTC time difference
+            String infoTimeShift = "00:00:00"; // Treat missing time-zone metadata as UTC.
 
             while (infoReader.ready()) {
                 String line = infoReader.readLine();
@@ -162,10 +148,6 @@ public class ActigraphReader {
                 }
             }
 
-            // System.out.println("Device's initial offset: " + infoTimeShift);
-            // System.out.println("Start date (local UNIX): " + startDate);
-            // System.out.println("Stop date (local UNIX): " + stopDate);
-
             // Prefer a plausible scale recorded in info.txt. Older files and
             // invalid metadata can use the known device-family fallback.
             if (!isValidAccelerationScale(accelerationScale)
@@ -183,7 +165,6 @@ public class ActigraphReader {
 
             double sampleDelta = setSampleDelta(sampleRate);
 
-            // else leave as specified in info.txt?
             if (gt3Version == VALID_GT3_V1_FILE) readG3TXv1Pairs(
                     activityReader,
                     infoTimeShift,
@@ -223,7 +204,7 @@ public class ActigraphReader {
         info.put("ReadErrors", String.valueOf(errCounter));
         info.put("SampleRate", String.valueOf(sampleRate));
 
-        // Write to info.txt file. Each line is a key:value pair.
+        // Persist reader status metadata alongside the converted data.
         String outInfo = outDir + File.separator + "info.txt";
         try {
             FileWriter file = new FileWriter(outInfo);
@@ -242,7 +223,7 @@ public class ActigraphReader {
 
 
     /**
-     ** Method to read all the x/y/z data from a GT3X (V2) activity.bin file.
+     ** Reads x/y/z data from GT3X V2 records in log.bin.
      ** File specification at: https://github.com/actigraph/NHANES-GT3X-File-Format/blob/master/fileformats/activity.bin.md
      ** Data is stored sequentially at the sample rate specified in the header (1/f = sampleDelta in milliseconds)
      ** Each pair of readings occupies an awkward 9 bytes to conserve space, so must be read 2 at a time.
@@ -262,23 +243,20 @@ public class ActigraphReader {
         final int ACTIVITY_ID = 0;
         final int ACTIVITY2_ID = 26;
 
-        // Read 2 XYZ samples at a time, each sample consists of 36 bits ... 2 full samples will be 9 bytes
+        // Two 36-bit XYZ samples occupy nine bytes in the packed V1 stream.
         int checkSum = 0, type=0;
         int i = 0;
         long date = 0;
         int datum;
         int separator = 0;
         int size = 0;
-        int initIndex = 0; // starting index of a parket
+        int initIndex = 0; // Starting index of the current packet.
         boolean isHeader = true;
         int packetCount = 0;
 
-        // 1. process header
-        // 2. process payload based on type for each packet
-        // 3. validate checksum for each packet
+        // Each packet consists of a header, a type-specific payload, and a checksum.
         try {
             while ((datum=activityReader.read())!=-1){
-                // 1. Process header
                 byte current = (byte)datum;
                 if (isHeader) {
                     switch (i-initIndex) {
@@ -289,8 +267,7 @@ public class ActigraphReader {
                             type = current;
                             break;
                         case 2:
-                            // not sure why this is needed but without casting, this might
-                            // result in leading ones during type conversion
+                            // Mask before widening so sign extension cannot corrupt the date.
                             date = (long)(current & 0xFF);
                             break;
                         case 3:
@@ -311,23 +288,16 @@ public class ActigraphReader {
 
                     if (i == initIndex+GT3_HEADER_SIZE-1) {
                         isHeader = false;
-                        // logger.log(Level.FINER, "\nHeader info" +
-                        //         "\ntype: "+ type +
-                        //         String.format("\nDate 0x%08X: ", date) +
-                        //         "\nsize: "+ size +
-                        //         "\nStarting index: "+ initIndex);
                     }
 
                 } else if (isPayload(i, size, initIndex)) {
-                    // process payload depending on the type of record
-                    // There exist various packet types. Currently, we are
-                    // only processing packets of type ACTIVITY
+                    // Packet types have different payload layouts; activity records
+                    // are the only data-bearing types currently decoded here.
                     // https://github.com/actigraph/GT3X-File-Format
                     checkSum ^= (byte)current;
 
                     if (type == PARAMETER_ID) {
-                        // logger.log(Level.INFO, "Processing parameter packet...");
-                        // process parameters Keyvale pair. Each pair is of 8 bytes.
+                        // Parameter records store key/value pairs in eight-byte groups.
                         byte [] keyPair = new byte[8];
                         byte mydatum;
                         keyPair[0] = current;
@@ -349,12 +319,11 @@ public class ActigraphReader {
                             double parameterScale = decodePara(keyval);
                             if (isValidAccelerationScale(parameterScale))
                                 accelerationScale = parameterScale;
-                            // logger.log(Level.INFO, "accelerationScale changed to "+accelerationScale);
                         }
 
                         i += 7;
                     } else if (type == ACTIVITY_ID && size > 1) {
-                        // when Size = 1, it is a USB connection event thus ignore.
+                        // A one-byte activity record marks a USB connection event.
                         if (!isValidAccelerationScale(accelerationScale))
                             throw new IllegalStateException("No valid acceleration scale found in GT3X metadata");
                         int [] res = processActivity(
@@ -372,7 +341,7 @@ public class ActigraphReader {
                         i = res[0];
                         checkSum = res[1];
                     } else if (type == ACTIVITY2_ID && size > 1) {
-                        // when Size = 1, it is a USB connection event thus ignore.
+                        // A one-byte activity record marks a USB connection event.
                         if (!isValidAccelerationScale(accelerationScale))
                             throw new IllegalStateException("No valid acceleration scale found in GT3X metadata");
                         int [] res = processActivity2(
@@ -397,13 +366,12 @@ public class ActigraphReader {
                     size = 0;
                     type = 0;
                     separator = 0;
-                    // allow reading header after checksum is done checking
+                    // Begin the next packet after validating this packet's checksum.
                     isHeader = true;
                     initIndex = i+1;
                     packetCount++;
 
                     if (packetCount % 10000 == 0) {
-                        // logger.log(Level.INFO, "Done processing "+packetCount+" packets.");
                     }
                 }
 
@@ -411,7 +379,7 @@ public class ActigraphReader {
             }
         }
         catch (IOException ex) {
-            // logger.log(Level.INFO, "End of .g3tx file reached");
+            // End of the GT3X stream.
         }
     }
 
@@ -434,9 +402,9 @@ public class ActigraphReader {
             NpyWriter writer
             ) {
 
-        int samples = 0; // num samples collected so far
+        int samples = 0;
 
-        // Read 2 XYZ samples at a time, each sample consists of 36 bits ... 2 full samples will be 9 bytes
+        // Two 36-bit XYZ samples occupy nine bytes in the packed V1 stream.
         byte[] bytes=new byte[9];
         int i=0;
         int twoSampleCounter = 0;
@@ -447,13 +415,11 @@ public class ActigraphReader {
             while (( datum=activityReader.read())!=-1){
                 bytes[i]=(byte)datum;
 
-                // if we have enough bytes to read two 36 bit data samples
                 if (++i==9){
                     twoSamples = readAccelPair(bytes, accelerationScale);
                     twoSampleCounter = 2;
                 }
 
-                // read the two samples from the sample counter
                 while (twoSampleCounter>0) {
                     twoSampleCounter--;
                     i=0;
@@ -462,10 +428,13 @@ public class ActigraphReader {
                     double x = twoSamples[3-twoSampleCounter*3];
                     double y = twoSamples[4-twoSampleCounter*3];
                     double z = twoSamples[5-twoSampleCounter*3];
-                    // double temp = 1.0d; // don't know temp yet
 
                     try {
-                        writer.write(toItems(TimeUnit.MILLISECONDS.toNanos(t), x, y, z));
+                        writer.write(
+                                TimeUnit.MILLISECONDS.toNanos(t),
+                                (float) x, (float) y, (float) z);
+                    } catch (NpyWriter.SchemaMismatchException e) {
+                        throw e;
                     } catch (Exception e) {
                         System.err.println("Line write error: " + e.toString());
                     }
@@ -476,7 +445,6 @@ public class ActigraphReader {
             }
         }
         catch (IOException ex) {
-            // System.out.println("End of .g3tx file reached");
         }
     }
 
@@ -531,19 +499,19 @@ public class ActigraphReader {
 
                     axis_val = (short) shifter;
                     sample[axis] = axis_val / accelerationScale;
-                    sample[axis] = (double) Math.round(sample[axis] * 1000d) / 1000d; // round to 3rd decimal
+                    sample[axis] = (double) Math.round(sample[axis] * 1000d) / 1000d;
                 }
-                // logger.log(Level.FINER, "i: " + i);
-                // logger.log(Level.FINER, "x y z: " + sample[1] + " " + sample[0] + " " + sample[2]);
-
-                // double temp = 1.0d; // don't know temp yet
-                long myTime = Math.round((1000d*samples)/sampleRate) + firstSampleTime*1000; // in Miliseconds
+                long myTime = Math.round((1000d*samples)/sampleRate) + firstSampleTime*1000;
                 samples += 1;
 
 
-                // Yes, sample[1] and sample[0] are swapped. Not the case elsewhere.
+                // V1 stores Y before X; restore the public X/Y/Z order here.
                 try {
-                    writer.write(toItems(TimeUnit.MILLISECONDS.toNanos(myTime), sample[1], sample[0], sample[2]));
+                    writer.write(
+                            TimeUnit.MILLISECONDS.toNanos(myTime),
+                            (float) sample[1], (float) sample[0], (float) sample[2]);
+                } catch (NpyWriter.SchemaMismatchException e) {
+                    throw e;
                 } catch (Exception e) {
                     System.err.println("Line write error: " + e.toString());
                 }
@@ -568,7 +536,7 @@ public class ActigraphReader {
 
         LocalTime timeShift = LocalTime.parse(infoTimeShift);
         long timeShiftMilli = 1000 * (shiftSign * timeShift.getHour() * 60 * 60 +
-                timeShift.getMinute() * 60); // time shfit w.r.t. UTC
+                timeShift.getMinute() * 60); // Time shift relative to UTC.
         return myTime - timeShiftMilli;
     }
 
@@ -607,18 +575,18 @@ public class ActigraphReader {
                     axis_val = (short) shifter;
 
                     sample[axis] = axis_val / accelerationScale;
-                    sample[axis] = (double) Math.round(sample[axis] * 1000d) / 1000d; // round to 3rd decimal
+                    sample[axis] = (double) Math.round(sample[axis] * 1000d) / 1000d;
                 }
 
-                // double temp = 1.0d; // don't know temp yet
-                long myTime = Math.round((1000d*samples)/sampleRate) + firstSampleTime*1000; // in Miliseconds
+                long myTime = Math.round((1000d*samples)/sampleRate) + firstSampleTime*1000;
                 samples += 1;
 
-                // logger.log(Level.FINER, "i: " + i + "\nx y z: " + sample[0] + " " + sample[1] + " " + sample[2] +
-                //         "\nTime:" + myTime);
-
                 try {
-                    writer.write(toItems(TimeUnit.MILLISECONDS.toNanos(myTime), sample[0], sample[1], sample[2]));
+                    writer.write(
+                            TimeUnit.MILLISECONDS.toNanos(myTime),
+                            (float) sample[0], (float) sample[1], (float) sample[2]);
+                } catch (NpyWriter.SchemaMismatchException e) {
+                    throw e;
                 } catch (Exception e) {
                     System.err.println("Line write error: " + e.toString());
                 }
@@ -667,7 +635,7 @@ public class ActigraphReader {
         if (z2>2047)
             z2+=61440;
 
-        // convert to 'g'
+        // Convert raw axis values to g using the metadata scale.
         double gx1=x1/accelerationScale;
         double gy1=y1/accelerationScale;
         double gz1=z1/accelerationScale;
@@ -681,7 +649,7 @@ public class ActigraphReader {
 
 
     /**
-     * check checksum with payload and header info
+     * Checks the checksum formed from the packet payload and header fields.
      */
     private static void checkChecksum(
             int i,
@@ -701,21 +669,17 @@ public class ActigraphReader {
         checkSum ^= (byte)((date >> 16) & 0xFF);
         checkSum ^= (byte)((date >> 24) & 0xFF);
 
-        // to convert to one's complement as the checksum is one's complement
+        // The stored checksum is the one's complement of the accumulated bytes.
         checkSum = (byte)~checkSum;
         if (checkSum != target_value) {
-            // logger.log(Level.SEVERE, "Packet parsing failed at byte "+ i + "\nChecksum does not match!"
-            //         + String.format("\nExpected 0x%08X", target_value) +String.format("\nObtained 0x%08X", checkSum));
             System.exit(-1);
-        } else {
-            // logger.log(Level.FINER, "Verification succeeds");
         }
     }
 
 
     private static double setAccelerationScale(String serialNumber) {
-        double ACCELERATION_SCALE_FACTOR_NEO_CLE = 341.0; // == 2046 (range of data) / 6 (range of G's)
-        double ACCELERATION_SCALE_FACTOR_MOS = 256.0; // == 2048/8?
+        double ACCELERATION_SCALE_FACTOR_NEO_CLE = 341.0; // 2046 raw units over 6 g.
+        double ACCELERATION_SCALE_FACTOR_MOS = 256.0; // 2048 raw units over 8 g.
         double accelerationScale = -1;
 
         if((serialNumber.startsWith("NEO") || (serialNumber.startsWith("CLE")))) {
@@ -760,8 +724,7 @@ public class ActigraphReader {
 
 
     /**
-     ** Payload should between the initIndex and InitIndex+size. Upper bound is
-     *  exclusive.
+     ** Returns whether the byte index lies within the packet payload.
      **
      */
     private static boolean isPayload(int i, int size, int initIndex) {
@@ -785,26 +748,22 @@ public class ActigraphReader {
         int exponent;
         int i32;
 
-        /* handle numbers that are too big */
         if (ENCODED_MAXIMUM == value)
             return Integer.MAX_VALUE;
         else if (ENCODED_MAXIMUM == value)
             return -Integer.MAX_VALUE;
 
-        /* extract the exponent */
         i32 = (int) ((value & EXPONENT_MASK) >>> EXPONENT_OFFSET);
         if (0 != (i32 & 0x80))
             i32 = (int)((int)i32 | 0xFFFFFF00);
         exponent = (int)i32;
 
-        /* extract the significand */
         i32 = (int)(value & SIGNIFICAND_MASK);
         if (0 != (i32 & ENCODED_MINIMUM))
             i32 = (int)((int)i32 | 0xFF000000);
 
         significand = (double) i32 / FLOAT_MAXIMUM;
 
-        /* calculate the floating point value */
         return significand * Math.pow(2.0, exponent);
     }
 
@@ -818,10 +777,10 @@ public class ActigraphReader {
 
 
     /**
-     ** Helper method that converts .NET ticks that Actigraph GT3X uses to millisecond (local)
-     ** method from: https://github.com/SPADES-PUBLIC/mHealth-GT3X-converter-public/blob/master/src/com/qmedic/data/converter/gt3x/GT3XUtils.java
+     ** Converts the .NET ticks used by Actigraph GT3X to local milliseconds.
+     ** Based on: https://github.com/SPADES-PUBLIC/mHealth-GT3X-converter-public/blob/master/src/com/qmedic/data/converter/gt3x/GT3XUtils.java
      *
-     * Unit: .NET has a unit of 100 naooseconds
+     * A .NET tick represents 100 nanoseconds.
      * https://docs.microsoft.com/en-us/dotnet/api/system.datetime.ticks?view=netcore-3.1
      **/
     private static long GT3XfromTickToMillisecond(final long ticks)
@@ -837,7 +796,7 @@ public class ActigraphReader {
      */
     private static int getGT3XVersion(final ZipFile zip) throws IOException {
 
-        // Check if the file contains the necessary Actigraph files
+        // Check for the entries required by each supported GT3X version.
         boolean hasActivityData = false;
         boolean hasLuxData = false;
         boolean hasInfoData = false;
@@ -862,22 +821,4 @@ public class ActigraphReader {
 
         return INVALID_GT3_FILE;
     }
-
-
-    private static Map<String, Object> toItems(long t, float x, float y, float z) {
-        Map<String, Object> items = new HashMap<String, Object>();
-        items.put("time", t);
-        items.put("x", x);
-        items.put("y", y);
-        items.put("z", z);
-        // items.put("temperature", temperature);
-        // items.put("lux", light);
-        return items;
-    }
-
-    private static Map<String, Object> toItems(long t, double x, double y, double z) {
-        return toItems(t, (float) x, (float) y, (float) z);
-    }
-
-
 }
