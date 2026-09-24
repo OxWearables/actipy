@@ -1,0 +1,93 @@
+{
+  "format_version": 1,
+  "oracle": "Expected arrays are decoded by the standalone format-specific implementations in tests/tools/build_real_parser_fixtures.py; actipy and the Java readers are not imported or executed.",
+  "fixtures": [
+    {
+      "fixture": "actigraph-v1.gt3x",
+      "expected": "actigraph-v1-expected.npz",
+      "source": "data/sample-actigraph.gt3x",
+      "fixture_sha256": "6ceec17777afdc64c5d5c7eb66d4edafb0d5ab8f6803831baa948861527d2e10",
+      "expected_sha256": "54064ba60ef87fa6deb7db1f609b151cce6a66941e08e318bdebb641f04e1ab6",
+      "source_sha256": "ac2dcc31736d96324d9be7f522482f4c6fa51f686c5fdae3a7984195c5699830",
+      "selection": "First 100 complete nine-byte sample pairs (200 samples).",
+      "rows": 200,
+      "fields": [
+        "time",
+        "x",
+        "y",
+        "z"
+      ],
+      "sample_rate": 30.0,
+      "device": "Actigraph",
+      "device_id": "NEO1DXXXXXXXX",
+      "read_ok": 1,
+      "read_errors": 0
+    },
+    {
+      "fixture": "actigraph-leap-v2.gt3x",
+      "expected": "actigraph-leap-v2-expected.npz",
+      "source": "data/sample-actigraph-leap.gt3x",
+      "fixture_sha256": "bd480c6c324be97dfbe15796bd9306b9d48987e08884372925dc4a5000c0abee",
+      "expected_sha256": "3d57007640481f02d021acae271fe1227b2aab81a24ff77be10d26a2e7303f45",
+      "source_sha256": "f0bfb1788119d4daab099a61c915b6b85227838a63ad39921d16abfbc851bda3",
+      "selection": "First eight complete packets: one type 6, two type 2, and five type 26.",
+      "rows": 150,
+      "fields": [
+        "time",
+        "x",
+        "y",
+        "z"
+      ],
+      "sample_rate": 30.0,
+      "device": "Actigraph",
+      "device_id": "STM2E24245655",
+      "read_ok": 1,
+      "read_errors": 0
+    },
+    {
+      "fixture": "axivity-ax3.cwa",
+      "expected": "axivity-ax3-expected.npz",
+      "source": "data/sample-axivity.cwa.gz",
+      "fixture_sha256": "639ccfc2c5d57db2dd1b26bba96f4c4bbb655553395b0a1d799f2d5031a25c04",
+      "expected_sha256": "4fc414b7bc599fcc5500e396a01682b1e7ee46e1a0b862cbb2bd1f9e831ae03c",
+      "source_sha256": "1845a1b8e2d6c96a4ed1605739d003ff4c26539f635c0b87e58581719e61da3d",
+      "selection": "Metadata and reserved blocks followed by three packed AX3 data blocks.",
+      "rows": 360,
+      "fields": [
+        "time",
+        "x",
+        "y",
+        "z",
+        "temperature",
+        "light"
+      ],
+      "sample_rate": 100.0,
+      "device": "Axivity",
+      "device_id": 13110,
+      "read_ok": 1,
+      "read_errors": 0
+    },
+    {
+      "fixture": "geneactiv.bin",
+      "expected": "geneactiv-expected.npz",
+      "source": "data/sample-geneactiv.bin.gz",
+      "fixture_sha256": "acb48b7764b6b840745fbf673a06c0174783ddb997248dfeeedd3f527fa15a29",
+      "expected_sha256": "1338e927b5735d44d10bf718f19235330df45c6dbd33f8de56c860d88927f0dc",
+      "source_sha256": "6c28230542fe4b1cb56425baf909d4fad9a2823dc515eb8ab2bcdcad400063cb",
+      "selection": "Original 59-line header and first three complete pages; page count changed to 3.",
+      "rows": 900,
+      "fields": [
+        "time",
+        "x",
+        "y",
+        "z",
+        "temperature"
+      ],
+      "sample_rate": 85.7,
+      "device": "GENEActiv",
+      "device_id": "012159",
+      "read_ok": 1,
+      "read_errors": 0
+    }
+  ]
+}

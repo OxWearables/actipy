@@ -135,3 +135,9 @@ data/
 *.pkl
 *.pkl.gz
 memray-*
+
+# Small, curated parser regression fixtures are intentionally versioned.
+!tests/data/
+tests/data/*
+!tests/data/parser-fixtures/
+!tests/data/parser-fixtures/**
