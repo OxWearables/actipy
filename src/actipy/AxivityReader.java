@@ -22,7 +22,7 @@ public class AxivityReader {
 
     private static final int BLOCKSIZE = 512;
 
-    // Specification of items to be written
+    // Keep field order aligned with NpyWriter's primitive row layouts.
     private static final Map<String, String> ITEM_NAMES_AND_TYPES_AX3;
     private static final Map<String, String> ITEM_NAMES_AND_TYPES_AX6;
     static{
@@ -97,12 +97,10 @@ public class AxivityReader {
                 blockParser.parse(block);
                 block.clear();
 
-                // Progress bar
                 blockCount++;
                 if (verbose) {
                     if ((blockCount % 10000 == 0) || (blockCount == numBlocksTotal)) {
                         System.out.print("Reading file... " + (blockCount * 100 / numBlocksTotal) + "%\r");
-                        // if (blockCount == numBlocksTotal) {System.out.print("\n");}
                     }
                 }
 
@@ -110,6 +108,8 @@ public class AxivityReader {
 
             statusOK = 1;
 
+        } catch (NpyWriter.SchemaMismatchException e) {
+            throw e;
         } catch (Exception e) {
             statusOK = 0;
             e.printStackTrace();
@@ -127,7 +127,7 @@ public class AxivityReader {
         info.put("ReadErrors", String.valueOf(blockParser.getErrCounter()));
         info.put("SampleRate", String.valueOf(blockParser.getSampleRate()));
 
-        // Write to info.txt file. Each line is a key:value pair.
+        // Persist reader status metadata alongside the converted data.
         String outInfo = outDir + File.separator + "info.txt";
         try {
             FileWriter file = new FileWriter(outInfo);
@@ -145,7 +145,7 @@ public class AxivityReader {
     }
 
 
-    // Check if the accFile has a gyroscope columns
+    // Check whether the input contains gyroscope axes.
     private static boolean detectGyro(String accFile) {
         boolean hasGyro = false;
         try (FileInputStream accStream = new FileInputStream(accFile);
@@ -215,7 +215,7 @@ public class AxivityReader {
                     short rateCode = (short) (block.get(24) & 0xff);
                     short numAxesBPS = (short) (block.get(25) & 0xff);
                     int sampleCount = getUnsignedShort(block, 28);
-                    long blockTime = getCwaTimestamp(blockTimeInfo);  // Unix seconds
+                    long blockTime = getCwaTimestamp(blockTimeInfo);  // Unix seconds.
                     double blockStartTime, blockEndTime;
                     short timestampOffset = 0;
                     float offsetStart = 0;
@@ -234,41 +234,40 @@ public class AxivityReader {
 					}
                     float gyroUnit = (gyroRange != 0) ? (32768.0f / gyroRange) : 0;
 
-                    // Figure out sample rate (freq)
+                    // Decode the sample rate from the block format.
                     if (rateCode == 0) {
-                        // Old format, where pos26 = freq
+                        // In the old format, position 26 stores the frequency.
                         freq = (float) block.getShort(26);
-                        // Check that sample rate is valid, otherwise skip block
+                        // Reject blocks with no usable sample rate.
                         if (freq == 0) { throw new Exception("Found zero sample rate is zero. Skipping data block..."); }
                         offsetStart = 0;
                     } else {
-                        // New format
+                        // The new format stores a timestamp offset at position 26.
                         timestampOffset = block.getShort(26);
                         freq = 3200.0f / (1 << (15 - (rateCode & 15)));
                         if (freq <= 0) { freq = 1.0f; }
                         offsetStart = (float) -timestampOffset / freq;
-                        // Checksum
+                        // Validate the block checksum before decoding samples.
                         for (int i = 0; i < BLOCKSIZE / 2; i++) { checkSum += block.getShort(i * 2); }
                         if (checkSum != 0) { throw new Exception("Found checksum error. Skipping data block..."); }
                     }
                     sampleRate = freq;
 
-                    // Fix so blockTime takes negative offset into account (for <
-                    // :00 s boundaries) and so offsetStart is always positive
+                    // Normalize negative offsets at second boundaries so offsetStart
+                    // remains non-negative.
                     blockTime += (long) Math.floor(offsetStart);
                     offsetStart -= (float) Math.floor(offsetStart);
-                    // Start and end of block
+                    // Compute the block's start and end timestamps.
                     blockStartTime = (double) blockTime + offsetStart;
                     blockEndTime = blockStartTime + (float) sampleCount / freq;
-                    // Fix so packet boundary times are always the same (pushes
-                    // error to last packet, would be better to distribute any error
-                    // over multiple packets -- would require buffering a few packets)
+                    // Keep adjacent packet boundaries stable; any rounding error is
+                    // left for the final packet because distributing it needs buffering.
                     if ((lastBlockTime != 0) && ((blockStartTime - lastBlockTime) < 1.0)) {
                         blockStartTime = lastBlockTime;
                     }
                     lastBlockTime = blockEndTime;
 
-                    // calculate num bytes per sample...
+                    // Determine the packed sample width from the axis/format flags.
 					int bytesPerSample = 0;
 					numAxes = (numAxesBPS >> 4) & 0x0f;
 
@@ -294,14 +293,11 @@ public class AxivityReader {
 						accelAxis = 0;
 					}
 
-                    // Limit values
-                    int maxSamples = 480 / bytesPerSample; //80 or 120 samples/block
+                    // Cap malformed counts at the payload capacity.
+                    int maxSamples = 480 / bytesPerSample; // 80 or 120 samples/block.
                     if (sampleCount > maxSamples) { sampleCount = maxSamples; }
 
-                    // Session start?
                     if (sessionStart == null) { sessionStart = getCwaLocalDateTime(blockTimeInfo); }
-
-                    // raw reading values
                     double t = 0;
 					short[] sampleValues = new short[sampleCount * numAxes];
 
@@ -322,7 +318,7 @@ public class AxivityReader {
                         }
 
                         t = blockStartTime + (double)i * (blockEndTime - blockStartTime) / sampleCount;
-                        t *= 1000;  // secs to millis
+                        t *= 1000;  // Convert seconds to milliseconds for NpyWriter.
 
                         float ax = 0, ay = 0, az = 0;
 			            if (accelAxis >= 0) {
@@ -339,9 +335,13 @@ public class AxivityReader {
 			            }
 
                         if (gyroAxis >= 0) {
-                            writer.write(toItems(TimeUnit.MILLISECONDS.toNanos((long) t), ax, ay, az, gx, gy, gz, temperature, light));
+                            writer.write(
+                                    TimeUnit.MILLISECONDS.toNanos((long) t),
+                                    ax, ay, az, gx, gy, gz, temperature, light);
                         } else {
-                            writer.write(toItems(TimeUnit.MILLISECONDS.toNanos((long) t), ax, ay, az, temperature, light));
+                            writer.write(
+                                    TimeUnit.MILLISECONDS.toNanos((long) t),
+                                    ax, ay, az, temperature, light);
                         }
 
                     }
@@ -350,6 +350,8 @@ public class AxivityReader {
 
                 }
 
+            } catch (NpyWriter.SchemaMismatchException e) {
+                throw e;
             } catch (Exception e) {
                 errCounter++;
                 e.printStackTrace();
@@ -395,57 +397,4 @@ public class AxivityReader {
     private static int getUnsignedShort(ByteBuffer bb, int position) {
         return (bb.getShort(position) & 0xffff);
     }
-
-
-    private static Map<String, Object> toItems(
-            long t, float x, float y, float z,
-            float temperature, float light) {
-        Map<String, Object> items = new HashMap<String, Object>();
-        items.put("time", t);
-        items.put("x", x);
-        items.put("y", y);
-        items.put("z", z);
-        items.put("temperature", temperature);
-        items.put("light", light);
-        return items;
-    }
-
-
-    private static Map<String, Object> toItems(
-            long t, float x, float y, float z,
-            float gyro_x, float gyro_y, float gyro_z,
-            float temperature, float light) {
-        Map<String, Object> items = new HashMap<String, Object>();
-        items.put("time", t);
-        items.put("x", x);
-        items.put("y", y);
-        items.put("z", z);
-        items.put("gyro_x", gyro_x);
-        items.put("gyro_y", gyro_y);
-        items.put("gyro_z", gyro_z);
-        items.put("temperature", temperature);
-        items.put("light", light);
-        return items;
-    }
-
-
-    private static Map<String, Object> toItems(
-            long t, double x, double y, double z,
-            double temperature, float light) {
-        return toItems(
-                t, (float) x, (float) y, (float) z,
-                (float) temperature, (float) light);
-    }
-
-
-    private static Map<String, Object> toItems(
-            long t, double x, double y, double z,
-            double gyro_x, double gyro_y, double gyro_z,
-            double temperature, float light) {
-        return toItems(
-                t, (float) x, (float) y, (float) z,
-                (float) gyro_x, (float) gyro_y, (float) gyro_z,
-                (float) temperature, (float) light);
-    }
-
 }

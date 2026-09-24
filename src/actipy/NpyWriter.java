@@ -5,6 +5,7 @@ import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -22,6 +23,14 @@ public class NpyWriter {
 	private final static int BLOCK_SIZE = 16;
 	private final static int HEADER_SIZE = BLOCK_SIZE * 16;
 	private final static byte[] NPY_HEADER;
+	private final static String[] XYZ_FIELDS = {"time", "x", "y", "z"};
+	private final static String[] XYZT_FIELDS = {"time", "x", "y", "z", "temperature"};
+	private final static String[] XYZTL_FIELDS = {
+			"time", "x", "y", "z", "temperature", "light"};
+	private final static String[] XYZ_GYRO_TL_FIELDS = {
+			"time", "x", "y", "z", "gyro_x", "gyro_y", "gyro_z",
+			"temperature", "light"};
+	private enum PrimitiveLayout { UNKNOWN, XYZ, XYZT, XYZTL, XYZ_GYRO_TL }
 	static {
 		byte[] hdr = "XNUMPY".getBytes(StandardCharsets.US_ASCII);
 		hdr[0] = (byte) 0x93;
@@ -29,25 +38,37 @@ public class NpyWriter {
 	}
 
     private String outputFile;
-	private Map<String, String> itemNamesAndTypes;
+	private final Map<String, String> itemNamesAndTypes;
+	private final PrimitiveLayout primitiveLayout;
 	private ByteBuffer buf;
 	private File file;
     private RandomAccessFile raf;
 	private int linesWritten = 0;
 
+	public static class SchemaMismatchException extends IllegalStateException {
+		private static final long serialVersionUID = 1L;
+
+		SchemaMismatchException(String message) {
+			super(message);
+		}
+	}
+
 
 	public NpyWriter(String outputFile, Map<String, String> itemNamesAndTypes) {
         this.outputFile = outputFile;
-		this.itemNamesAndTypes = itemNamesAndTypes;
-		this.buf = ByteBuffer.allocate(BUFSIZE * getBytesPerLine(itemNamesAndTypes)).order(NATIVE_BYTE_ORDER);
+		this.itemNamesAndTypes = Collections.unmodifiableMap(
+				new LinkedHashMap<String, String>(itemNamesAndTypes));
+		this.primitiveLayout = getPrimitiveLayout(this.itemNamesAndTypes);
+		this.buf = ByteBuffer.allocate(
+				BUFSIZE * getBytesPerLine(this.itemNamesAndTypes)).order(NATIVE_BYTE_ORDER);
 
 		try {
             file = new File(outputFile);
 			raf = new RandomAccessFile(file, "rw");
-			raf.setLength(0); // clear file
+			raf.setLength(0);
 
-			// generate dummy header (maybe just use real header?)
-			int hdrLen = NPY_HEADER.length + 3; // +3 for three extra bytes due to NPY_(MIN/MAX)_VERSION and \n
+			// Reserve space for the final header, which is written when the file closes.
+			int hdrLen = NPY_HEADER.length + 3; // Magic bytes, version bytes, and newline.
 			String filler = new String(new char[HEADER_SIZE + hdrLen]).replace("\0", " ") +"\n";
 			raf.writeBytes(filler);
 
@@ -64,13 +85,82 @@ public class NpyWriter {
 
 	public void write(Map<String, Object> items) throws IOException {
 		putItems(items);
+		finishRow();
+	}
 
-		if (!buf.hasRemaining()) {  // if buffer is full...
+
+	public void write(long time, float x, float y, float z) throws IOException {
+		requirePrimitiveLayout(PrimitiveLayout.XYZ);
+		buf.putLong(time);
+		buf.putFloat(x);
+		buf.putFloat(y);
+		buf.putFloat(z);
+		finishRow();
+	}
+
+
+	public void write(
+			long time,
+			float x, float y, float z, float temperature) throws IOException {
+		requirePrimitiveLayout(PrimitiveLayout.XYZT);
+		buf.putLong(time);
+		buf.putFloat(x);
+		buf.putFloat(y);
+		buf.putFloat(z);
+		buf.putFloat(temperature);
+		finishRow();
+	}
+
+
+	public void write(
+			long time,
+			float x, float y, float z, float temperature,
+			float light) throws IOException {
+		requirePrimitiveLayout(PrimitiveLayout.XYZTL);
+		buf.putLong(time);
+		buf.putFloat(x);
+		buf.putFloat(y);
+		buf.putFloat(z);
+		buf.putFloat(temperature);
+		buf.putFloat(light);
+		finishRow();
+	}
+
+
+	public void write(
+			long time,
+			float x, float y, float z, float gyroX,
+			float gyroY, float gyroZ, float temperature, float light) throws IOException {
+		requirePrimitiveLayout(PrimitiveLayout.XYZ_GYRO_TL);
+		buf.putLong(time);
+		buf.putFloat(x);
+		buf.putFloat(y);
+		buf.putFloat(z);
+		buf.putFloat(gyroX);
+		buf.putFloat(gyroY);
+		buf.putFloat(gyroZ);
+		buf.putFloat(temperature);
+		buf.putFloat(light);
+		finishRow();
+	}
+
+
+	private void finishRow() throws IOException {
+
+		if (!buf.hasRemaining()) {  // Flush a complete buffer before the next row.
 			raf.write(buf.array());
 			buf.clear();
 		}
 
 		linesWritten++;
+	}
+
+
+	private void requirePrimitiveLayout(PrimitiveLayout expected) {
+		if (primitiveLayout != expected) {
+			throw new SchemaMismatchException(
+					"Primitive row layout " + expected + " does not match schema");
+		}
 	}
 
 
@@ -121,7 +211,7 @@ public class NpyWriter {
 
 
 	/**
-	 * Updates the file's header based on the arrayType and number of array elements written thus far.
+	 * Writes the schema descriptor and current row count into the file header.
 	 */
 	private void writeHeader() {
 		try {
@@ -148,7 +238,7 @@ public class NpyWriter {
 						+ ", 'shape': (" + linesWritten + ",), "
 						+ "}";
 
-			int hdrLen    = dataHeader.length() + 1; // +1 for a terminating newline.
+			int hdrLen    = dataHeader.length() + 1; // Include the terminating newline.
 			if (hdrLen > HEADER_SIZE) {
 				throw new RuntimeException("header is too big to be written.");
 				// Increase HEADER_SIZE if this happens
@@ -192,13 +282,13 @@ public class NpyWriter {
 
 	private void finalFlush() {
 		try {
-			// write any remaining data
+			// Flush the partial buffer before rewriting the header.
 			raf.write(buf.array());
 			buf.clear();
 		} catch (IOException e) {
 			e.printStackTrace();
         }
-		writeHeader();  // ensure header is correct length
+		writeHeader();  // Rewrite the header with the final row count.
 	}
 
 
@@ -223,7 +313,7 @@ public class NpyWriter {
 	/**
 	 * Writes a little-endian short to the given output stream
 	 * @param out the stream
-	 * @param value the short value
+	 * @param value the value to encode
 	 * @throws IOException
 	 */
 	private static void writeLEShort(RandomAccessFile out, short value) throws IOException
@@ -240,7 +330,7 @@ public class NpyWriter {
 	/**
 	 * Writes a little-endian int to the given output stream
 	 * @param out the stream
-	 * @param value the short value
+	 * @param value the value to encode
 	 * @throws IOException
 	 */
 	private static void writeLEInt(RandomAccessFile out, int value) throws IOException
@@ -269,6 +359,42 @@ public class NpyWriter {
 			bytesPerLine += getBytesPerType(type);
 		}
 		return bytesPerLine;
+	}
+
+
+	private static PrimitiveLayout getPrimitiveLayout(
+			Map<String, String> itemNamesAndTypes) {
+		if (matchesPrimitiveLayout(itemNamesAndTypes, XYZ_FIELDS)) {
+			return PrimitiveLayout.XYZ;
+		}
+		if (matchesPrimitiveLayout(itemNamesAndTypes, XYZT_FIELDS)) {
+			return PrimitiveLayout.XYZT;
+		}
+		if (matchesPrimitiveLayout(itemNamesAndTypes, XYZTL_FIELDS)) {
+			return PrimitiveLayout.XYZTL;
+		}
+		if (matchesPrimitiveLayout(itemNamesAndTypes, XYZ_GYRO_TL_FIELDS)) {
+			return PrimitiveLayout.XYZ_GYRO_TL;
+		}
+		return PrimitiveLayout.UNKNOWN;
+	}
+
+
+	private static boolean matchesPrimitiveLayout(
+			Map<String, String> itemNamesAndTypes, String[] fieldNames) {
+		if (itemNamesAndTypes.size() != fieldNames.length) {
+			return false;
+		}
+		int index = 0;
+		for (Map.Entry<String, String> entry : itemNamesAndTypes.entrySet()) {
+			String expectedType = index == 0 ? "Datetime" : "Float";
+			if (!fieldNames[index].equals(entry.getKey())
+					|| !expectedType.equals(entry.getValue())) {
+				return false;
+			}
+			index++;
+		}
+		return true;
 	}
 
 
