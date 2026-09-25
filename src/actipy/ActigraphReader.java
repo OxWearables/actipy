@@ -1,10 +1,9 @@
+import java.io.BufferedInputStream;
 import java.io.BufferedReader;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 import java.util.zip.ZipEntry;
@@ -21,6 +20,7 @@ public class ActigraphReader {
     private static final int PARAMETER_ID = 21;
     private static final int ACTIVITY_ID = 0;
     private static final int ACTIVITY2_ID = 26;
+    private static final int INPUT_BUFFER_SIZE = 64 * 1024;
     private static final double MIN_ACCELERATION_SCALE = 16.0;
     private static final double MAX_ACCELERATION_SCALE = 32768.0;
     private static final double MIN_RAW_FULL_SCALE = 1024.0;
@@ -62,7 +62,8 @@ public class ActigraphReader {
             validateMetadata(metadata, version);
             result.sampleRate = metadata.sampleRate;
 
-            try (InputStream activity = zip.getInputStream(activityEntry);
+            try (InputStream activity = new BufferedInputStream(
+                         zip.getInputStream(activityEntry), INPUT_BUFFER_SIZE);
                  NpyWriter writer = new NpyWriter(options.dataPath(), NpyWriter.Layout.XYZ)) {
                 if (version == VALID_GT3_V1_FILE) {
                     readV1(activity, metadata, writer, result);
@@ -143,30 +144,46 @@ public class ActigraphReader {
             NpyWriter writer,
             ReaderSupport.Result result)
             throws IOException, ReaderSupport.FormatException {
-        byte[] pair = new byte[9];
+        byte[] inputBuffer = new byte[INPUT_BUFFER_SIZE];
         double[] samples = new double[6];
         long sampleIndex = 0;
+        int bufferedBytes = 0;
         try {
-            int packedBytes;
-            while ((packedBytes = readPackedV1OrEof(input, pair)) != 0) {
-                decodeFirstPackedSample(
-                        pair, 0, metadata.accelerationScale, samples, 0);
-                int sampleCount = 1;
-                if (packedBytes == pair.length) {
-                    decodeSecondPackedSample(
-                            pair, 0, metadata.accelerationScale, samples, 3);
-                    sampleCount = 2;
+            while (true) {
+                int count = input.read(
+                        inputBuffer,
+                        bufferedBytes,
+                        inputBuffer.length - bufferedBytes);
+                if (count == -1) {
+                    if (bufferedBytes == 5) {
+                        decodeFirstPackedSample(
+                                inputBuffer, 0, metadata.accelerationScale, samples, 0);
+                        writeV1Sample(writer, metadata, sampleIndex, samples, 0);
+                        sampleIndex++;
+                    } else if (bufferedBytes != 0) {
+                        throw new EOFException("Unexpected end of V1 packed activity");
+                    }
+                    break;
                 }
-                for (int sample = 0; sample < sampleCount; sample++) {
-                    long timeMillis = metadata.firstSampleTime
-                            + Math.round(1000d * sampleIndex / metadata.sampleRate);
-                    int offset = sample * 3;
-                    writer.write(
-                            TimeUnit.MILLISECONDS.toNanos(timeMillis),
-                            (float) samples[offset],
-                            (float) samples[offset + 1],
-                            (float) samples[offset + 2]);
+                if (count == 0) {
+                    continue;
+                }
+                bufferedBytes += count;
+
+                int pairedBytes = bufferedBytes - bufferedBytes % 9;
+                for (int offset = 0; offset < pairedBytes; offset += 9) {
+                    decodePackedPair(
+                            inputBuffer, offset, metadata.accelerationScale, samples);
+                    writeV1Sample(writer, metadata, sampleIndex, samples, 0);
                     sampleIndex++;
+                    writeV1Sample(writer, metadata, sampleIndex, samples, 3);
+                    sampleIndex++;
+                }
+
+                bufferedBytes -= pairedBytes;
+                if (bufferedBytes > 0) {
+                    System.arraycopy(
+                            inputBuffer, pairedBytes, inputBuffer, 0, bufferedBytes);
                 }
             }
         } catch (EOFException error) {
@@ -176,6 +193,21 @@ public class ActigraphReader {
             result.recordRecoverableError(
                     "Stopping at truncated GT3X data: " + error.getMessage());
         }
+    }
+
+    private static void writeV1Sample(
+            NpyWriter writer,
+            Metadata metadata,
+            long sampleIndex,
+            double[] samples,
+            int offset) throws IOException {
+        long timeMillis = metadata.firstSampleTime
+                + Math.round(1000d * sampleIndex / metadata.sampleRate);
+        writer.write(
+                TimeUnit.MILLISECONDS.toNanos(timeMillis),
+                (float) samples[offset],
+                (float) samples[offset + 1],
+                (float) samples[offset + 2]);
     }
 
     private static void readV2(
@@ -318,13 +350,14 @@ public class ActigraphReader {
                     "GT3X activity payload length is not a multiple of six");
         }
 
-        ByteBuffer samples = ByteBuffer.wrap(payload, 0, payloadSize)
-                .order(ByteOrder.LITTLE_ENDIAN);
         long sampleIndex = 0;
-        while (samples.hasRemaining()) {
-            float x = roundToThousandth(samples.getShort() / accelerationScale);
-            float y = roundToThousandth(samples.getShort() / accelerationScale);
-            float z = roundToThousandth(samples.getShort() / accelerationScale);
+        for (int offset = 0; offset < payloadSize; offset += 6) {
+            float x = roundToThousandth(
+                    littleEndianShort(payload, offset) / accelerationScale);
+            float y = roundToThousandth(
+                    littleEndianShort(payload, offset + 2) / accelerationScale);
+            float z = roundToThousandth(
+                    littleEndianShort(payload, offset + 4) / accelerationScale);
             writeV2Sample(writer, timestamp, sampleIndex++, sampleRate, x, y, z);
         }
         return (int) sampleIndex;
@@ -418,22 +451,6 @@ public class ActigraphReader {
         return true;
     }
 
-    private static int readPackedV1OrEof(InputStream input, byte[] target)
-            throws IOException {
-        int offset = 0;
-        while (offset < target.length) {
-            int count = input.read(target, offset, target.length - offset);
-            if (count == -1) {
-                if (offset == 0 || offset == 5) {
-                    return offset;
-                }
-                throw new EOFException("Unexpected end of V1 packed activity");
-            }
-            offset += count;
-        }
-        return offset;
-    }
-
     private static void readFully(
             InputStream input,
             byte[] target,
@@ -472,6 +489,10 @@ public class ActigraphReader {
                 | ((long) (bytes[offset + 1] & 0xFF) << 8)
                 | ((long) (bytes[offset + 2] & 0xFF) << 16)
                 | ((long) (bytes[offset + 3] & 0xFF) << 24);
+    }
+
+    private static short littleEndianShort(byte[] bytes, int offset) {
+        return (short) ((bytes[offset] & 0xFF) | (bytes[offset + 1] << 8));
     }
 
     private static double accelerationScaleForSerial(String serialNumber) {
