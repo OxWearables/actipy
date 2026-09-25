@@ -1,0 +1,6 @@
+# Reproduce the Python 3.8 type-check environment used by CI.
+mypy==1.14.1
+mypy_extensions==1.0.0
+numpy==1.24.4
+tomli==2.0.1
+typing_extensions==4.12.2

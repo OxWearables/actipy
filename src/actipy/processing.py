@@ -33,17 +33,22 @@ All functions preserve the input DataFrame structure and return tuples of
 
 import os
 import tempfile
+import warnings
+from typing import Any, Callable, Dict, Iterator, Literal, Optional, Tuple, Union, cast
+
 import numpy as np
 import pandas as pd
 import scipy.signal as signal
 import statsmodels.api as sm
-import warnings
-
+from numpy.typing import NDArray
 
 __all__ = ['quality_control', 'lowpass', 'calibrate_gravity', 'flag_nonwear', 'find_nonwear_segments', 'resample']
 
+Info = Dict[str, Any]
+Array = NDArray[Any]
 
-def quality_control(data, sample_rate):
+
+def quality_control(data: pd.DataFrame, sample_rate: float) -> Tuple[pd.DataFrame, Info]:
     """
     Perform basic quality control on the provided data.
 
@@ -72,7 +77,7 @@ def quality_control(data, sample_rate):
     :rtype: (pandas.DataFrame, dict)
     """
 
-    info = {}
+    info: Info = {}
 
     if len(data) == 0:
         info['ReadErrors'] = 0
@@ -124,7 +129,13 @@ def quality_control(data, sample_rate):
     return data, info
 
 
-def resample(data, sample_rate, dropna=False, start_first_complete_minute=False, chunksize=1_000_000):
+def resample(
+    data: pd.DataFrame,
+    sample_rate: float,
+    dropna: bool = False,
+    start_first_complete_minute: bool = False,
+    chunksize: int = 1_000_000,
+) -> Tuple[pd.DataFrame, Info]:
     """
     Nearest neighbor resampling. For downsampling, it is recommended to first
     apply an antialiasing filter (e.g. a low-pass filter, see ``lowpass``).
@@ -145,7 +156,7 @@ def resample(data, sample_rate, dropna=False, start_first_complete_minute=False,
     :rtype: (pandas.DataFrame, dict)
     """
 
-    info = {}
+    info: Info = {}
 
     if np.isclose(
         1 / sample_rate,
@@ -178,11 +189,6 @@ def resample(data, sample_rate, dropna=False, start_first_complete_minute=False,
         info['FirstCompleteMinuteStart'] = t0.strftime("%Y-%m-%d %H:%M:%S")
     nt = int(np.around((tf - t0).total_seconds() * sample_rate)) + 1  # integer number of ticks we need
 
-    # # In-memory version
-    # tf = t0 + pd.Timedelta((nt - 1) / sample_rate, unit='s')  # adjust tf
-    # t = pd.date_range(t0, tf, periods=nt, name=data.index.name)
-    # data = data.reindex(t, method='nearest', tolerance=pd.Timedelta('1s'), limit=1)
-
     with tempfile.TemporaryDirectory() as tmpdir:
         # We use TemporaryDirectory() + filename instead of NamedTemporaryFile()
         # because we don't want to open the file just yet:
@@ -211,7 +217,7 @@ def resample(data, sample_rate, dropna=False, start_first_complete_minute=False,
 
         del data
 
-        # We need to copy so that the mmap file can be trully deleted: 
+        # Copy so that the mmap file can be truly deleted:
         # https://stackoverflow.com/questions/24178460/in-python-is-it-possible-to-overload-numpys-memmap-to-delete-itself-when-the-m
         data = mmap2df(data_mmap, copy=True)
 
@@ -226,7 +232,12 @@ def resample(data, sample_rate, dropna=False, start_first_complete_minute=False,
     return data, info
 
 
-def lowpass(data, data_sample_rate, cutoff_rate=20, chunksize=1_000_000):
+def lowpass(
+    data: pd.DataFrame,
+    data_sample_rate: float,
+    cutoff_rate: float = 20,
+    chunksize: int = 1_000_000,
+) -> Tuple[pd.DataFrame, Info]:
     """
     Apply Butterworth low-pass filter.
 
@@ -242,22 +253,13 @@ def lowpass(data, data_sample_rate, cutoff_rate=20, chunksize=1_000_000):
     :rtype: (pandas.DataFrame, dict)
     """
 
-    info = {}
+    info: Info = {}
 
     # Skip this if the Nyquist freq is too low
     if data_sample_rate / 2 <= cutoff_rate:
         print(f"Skipping lowpass filter: data sample rate {data_sample_rate} too low for cutoff rate {cutoff_rate}")
         info['LowpassOK'] = 0
         return data, info
-
-    # # In-memory version
-    # xyz = data[['x', 'y', 'z']].to_numpy()
-    # where_nan = np.isnan(xyz).any(1)  # temporarily replace nans with 0s for butterfilt
-    # xyz[where_nan] = 0
-    # xyz = butterfilt(xyz, cutoff_rate, fs=data_sample_rate, axis=0)
-    # xyz[where_nan] = np.nan  # restore nans
-    # data = data.copy(deep=True)  # copy to avoid modifying original data
-    # data[['x', 'y', 'z']] = xyz
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # We use TemporaryDirectory() + filename instead of NamedTemporaryFile()
@@ -292,7 +294,7 @@ def lowpass(data, data_sample_rate, cutoff_rate=20, chunksize=1_000_000):
 
         del data
 
-        # We need to copy so that the mmap file can be trully deleted: 
+        # Copy so that the mmap file can be truly deleted:
         # https://stackoverflow.com/questions/24178460/in-python-is-it-possible-to-overload-numpys-memmap-to-delete-itself-when-the-m
         data = mmap2df(data_mmap, copy=True)
 
@@ -304,7 +306,12 @@ def lowpass(data, data_sample_rate, cutoff_rate=20, chunksize=1_000_000):
     return data, info
 
 
-def flag_nonwear(data, patience='90m', window='10s', stdtol=15 / 1000):
+def flag_nonwear(
+    data: pd.DataFrame,
+    patience: str = '90m',
+    window: str = '10s',
+    stdtol: float = 15 / 1000,
+) -> Tuple[pd.DataFrame, Info]:
     """
     Flag nonwear episodes in the data by setting them to NA. Non-wear episodes are inferred from long periods of no movement.
 
@@ -320,7 +327,7 @@ def flag_nonwear(data, patience='90m', window='10s', stdtol=15 / 1000):
     :rtype: (pandas.DataFrame, dict)
     """
 
-    info = {}
+    info: Info = {}
 
     nonwear_segments = find_nonwear_segments(data, patience=patience, window=window, stdtol=stdtol)
 
@@ -355,7 +362,16 @@ def flag_nonwear(data, patience='90m', window='10s', stdtol=15 / 1000):
     return data, info
 
 
-def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, window='10s', stdtol=15 / 1000, stdtol_min=None, return_coeffs=True, chunksize=1_000_000):  # noqa: C901
+def calibrate_gravity(
+    data: pd.DataFrame,
+    calib_cube: float = 0.3,
+    calib_min_samples: int = 50,
+    window: str = '10s',
+    stdtol: float = 15 / 1000,
+    stdtol_min: Optional[float] = None,
+    return_coeffs: bool = True,
+    chunksize: int = 1_000_000,
+) -> Tuple[pd.DataFrame, Info]:  # noqa: C901
     """
     Gravity calibration method of van Hees et al. 2014 (https://pubmed.ncbi.nlm.nih.gov/25103964/)
 
@@ -378,7 +394,7 @@ def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, window='10s', 
     :rtype: (pandas.DataFrame, dict)
     """
 
-    info = {}
+    info: Info = {}
 
     x_std = data['x'].resample(window, origin='start').std()
     y_std = data['y'].resample(window, origin='start').std()
@@ -517,14 +533,6 @@ def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, window='10s', 
 
     else:
 
-        # # In-memory version
-        # data = data.copy()
-        # data[['x', 'y', 'z']] = (best_intercept
-        #                          + best_slope * data[['x', 'y', 'z']].to_numpy())
-        # if hasT:
-        #     data[['x', 'y', 'z']] = (data[['x', 'y', 'z']]
-        #                              + best_slopeT * (data['temperature'].to_numpy()[:, None]))
-
         with tempfile.TemporaryDirectory() as tmpdir:
             # We use TemporaryDirectory() + filename instead of NamedTemporaryFile()
             # because we don't want to open the file just yet:
@@ -555,7 +563,7 @@ def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, window='10s', 
 
             del data
 
-            # We need to copy so that the mmap file can be trully deleted: 
+            # Copy so that the mmap file can be truly deleted:
             # https://stackoverflow.com/questions/24178460/in-python-is-it-possible-to-overload-numpys-memmap-to-delete-itself-when-the-m
             data = mmap2df(data_mmap, copy=True)
 
@@ -578,44 +586,12 @@ def calibrate_gravity(data, calib_cube=0.3, calib_min_samples=50, window='10s', 
     return data, info
 
 
-# def get_stationary_indicator(data, window='10s', stdtol=15 / 1000):
-#     """
-#     Return a boolean pandas.Series indicating stationary (low movement) periods.
-
-#     :param data: A pandas.DataFrame of acceleration time-series. It must contain
-#         at least columns `x,y,z` and the index must be a DateTimeIndex.
-#     :type data: pandas.DataFrame.
-#     :param window: Rolling window to use to check for stationary periods. Defaults to 10 seconds ("10s").
-#     :type window: str, optional
-#     :param stdtol: Standard deviation under which the window is considered stationary.
-#         Defaults to 15 milligravity (0.015).
-#     :type stdtol: float, optional
-#     :return: Boolean pandas.Series indexed as `data` indicating stationary periods.
-#     :rtype: pandas.Series
-#     """
-
-#     def fn(data):
-#         return (
-#             (data[['x', 'y', 'z']]
-#              .rolling(window)
-#              .std()
-#              < stdtol)
-#             .all(axis=1)
-#         )
-
-#     stationary_indicator = pd.concat(
-#         chunker(
-#             data,
-#             chunksize='4h',
-#             leeway=window,
-#             fn=fn
-#         )
-#     )
-
-#     return stationary_indicator
-
-
-def find_nonwear_segments(data, patience='90m', window='10s', stdtol=15 / 1000):
+def find_nonwear_segments(
+    data: pd.DataFrame,
+    patience: str = '90m',
+    window: str = '10s',
+    stdtol: float = 15 / 1000,
+) -> pd.Series:
     """
     Find nonwear episodes based on long periods of no movement.
 
@@ -662,18 +638,25 @@ def find_nonwear_segments(data, patience='90m', window='10s', stdtol=15 / 1000):
     return nonwear_segment_lengths
 
 
-def get_wear_time(t, tol=0.1):
+def get_wear_time(t: pd.Series, tol: float = 0.1) -> Tuple[float, int]:
     """ Return wear time in seconds and number of interrupts. """
     tdiff = t.diff()
     ttol = tdiff.mode().max() * (1 + tol)
     total_time = tdiff[tdiff <= ttol].sum().total_seconds()
     num_interrupts = (tdiff > ttol).sum()
-    return total_time, num_interrupts
+    return total_time, cast(int, num_interrupts)
 
 
-def butterfilt(x, cutoffs, fs, order=8, axis=0):
+def butterfilt(
+    x: Array,
+    cutoffs: Union[float, Tuple[float, Optional[float]]],
+    fs: float,
+    order: int = 8,
+    axis: int = 0,
+) -> Array:
     """ Butterworth filter. """
     nyq = 0.5 * fs
+    Wn: Union[float, Tuple[float, float]]
     if isinstance(cutoffs, tuple):
         hicut, lowcut = cutoffs
         if hicut > 0:
@@ -685,7 +668,7 @@ def butterfilt(x, cutoffs, fs, order=8, axis=0):
                 Wn = hicut / nyq
         else:
             btype = 'lowpass'
-            Wn = lowcut / nyq
+            Wn = cast(float, lowcut) / nyq
     else:
         btype = 'lowpass'
         Wn = cutoffs / nyq
@@ -693,10 +676,16 @@ def butterfilt(x, cutoffs, fs, order=8, axis=0):
     y = signal.sosfiltfilt(sos, x, axis=axis)
     y = y.astype(x.dtype, copy=False)
 
-    return y
+    return cast(Array, y)
 
 
-def chunker(data, chunksize='4h', leeway='0h', fn=None, fntrim=True):
+def chunker(
+    data: pd.DataFrame,
+    chunksize: str = '4h',
+    leeway: str = '0h',
+    fn: Optional[Callable[[pd.DataFrame], Any]] = None,
+    fntrim: bool = True,
+) -> Iterator[Any]:
     """ Return chunk generator for a given datetime-indexed DataFrame.
     A `leeway` parameter can be used to obtain overlapping chunks (e.g. leeway='30m').
     If a function `fn` is provided, it is applied to each chunk. The leeway is
@@ -726,7 +715,7 @@ def chunker(data, chunksize='4h', leeway='0h', fn=None, fntrim=True):
         yield chunk
 
 
-def slice_time(x, start, stop):
+def slice_time(x: Any, start: Any, stop: Any) -> Any:
     """ In pandas, slicing DateTimeIndex arrays is right-closed.
     This function performs right-open slicing. """
     x = x.loc[start : stop]
@@ -734,28 +723,35 @@ def slice_time(x, start, stop):
     return x
 
 
-def npy2df(data):
+def npy2df(data: Array) -> pd.DataFrame:
     """ Convert a numpy structured array to pandas dataframe. Also parse time
     and set as index. This function will avoid copies whenever possible. """
 
     t = pd.to_datetime(data['time'], unit='ms')
     t.name = 'time'
-    columns = [c for c in data.dtype.names if c != 'time']
+    names = cast(Tuple[str, ...], data.dtype.names)
+    columns = [c for c in names if c != 'time']
     data = pd.DataFrame({c: data[c] for c in columns}, index=t, copy=False)
     return data
 
 
-def mmap_like(data, filename, mode='w+', shape=None):
+def mmap_like(
+    data: pd.DataFrame,
+    filename: str,
+    mode: Literal['r', 'c', 'r+', 'w+'] = 'w+',
+    shape: Optional[Tuple[int, ...]] = None,
+) -> "np.memmap[Any, Any]":
     dtype = np.dtype([
         (data.index.name, data.index.dtype), 
         *[(c, data[c].dtype) for c in data.columns]
     ])
     shape = shape or (len(data),)
-    data_mmap = np.memmap(filename, dtype=dtype, mode=mode, shape=shape)
-    return data_mmap
+    return np.memmap(filename, dtype=dtype, mode=mode, shape=shape)
 
 
-def copy2mmap(data, data_mmap, flush=True):
+def copy2mmap(
+    data: pd.DataFrame, data_mmap: Array, flush: bool = True
+) -> None:
     """ Copy a pandas.DataFrame to a numpy.memmap. This operation is in-place.
 
     :param data: A pandas.DataFrame of acceleration time-series.
@@ -767,13 +763,15 @@ def copy2mmap(data, data_mmap, flush=True):
     for c in data.columns:
         data_mmap[c] = data[c].to_numpy()
     if flush:
-        np.memmap.flush(data_mmap)
-    return
+        np.memmap.flush(cast("np.memmap[Any, Any]", data_mmap))
 
 
-def mmap2df(data_mmap, index_col='time', copy=True):
+def mmap2df(
+    data_mmap: Array, index_col: str = 'time', copy: bool = True
+) -> pd.DataFrame:
     """ Convert a numpy structured array to pandas dataframe. """
-    columns = [c for c in data_mmap.dtype.names if c != index_col]
+    names = cast(Tuple[str, ...], data_mmap.dtype.names)
+    columns = [c for c in names if c != index_col]
     data = pd.DataFrame(
         {c: np.asarray(data_mmap[c]) for c in columns}, copy=copy,
         index=pd.Index(np.asarray(data_mmap[index_col]), name=index_col, copy=copy),

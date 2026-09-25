@@ -43,6 +43,7 @@ import json
 import os
 import time
 from pathlib import Path
+from typing import Any, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -50,8 +51,10 @@ from tqdm.auto import tqdm
 
 from actipy import read_device
 
+Frequency = Optional[Union[int, bool]]
 
-def main():
+
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="A tool to read and extract data from an Axivity (.cwa) device, and save it to a .csv file",
         add_help=True,
@@ -91,7 +94,6 @@ def main():
     output_cols = validate_output_cols(args.output_cols, data) or list(data.columns)
     data = data[output_cols]
 
-    # Output paths
     basename = resolve_path(args.filepath)[1]
     outdir = Path(args.outdir) / basename
     outdir.mkdir(parents=True, exist_ok=True)
@@ -113,7 +115,7 @@ def main():
         print(f"Info file saved to: {os.path.abspath(info_file)}")
 
 
-def validate_resample_hz(resample_hz):
+def validate_resample_hz(resample_hz: Optional[str]) -> Frequency:
     if resample_hz is None or resample_hz.lower() in ["none", ""]:
         return None
     if resample_hz.lower() in ["true"]:
@@ -121,25 +123,27 @@ def validate_resample_hz(resample_hz):
     if resample_hz.lower() in ["false"]:
         return False
     try:
-        resample_hz = int(resample_hz)
+        parsed_hz = int(resample_hz)
     except ValueError:
         raise ValueError("Sample rate must be a number, 'None', 'True', or 'False'.")
-    return resample_hz
+    return parsed_hz
 
 
-def validate_lowpass_hz(lowpass_hz):
+def validate_lowpass_hz(lowpass_hz: Optional[str]) -> Frequency:
     if lowpass_hz is None or lowpass_hz.lower() in ["none", ""]:
         return None
     if lowpass_hz.lower() in ["false"]:
         return False
     try:
-        lowpass_hz = int(lowpass_hz)
+        parsed_hz = int(lowpass_hz)
     except ValueError:
         raise ValueError("Lowpass hz must be a number, 'None', or 'False'.")
-    return lowpass_hz
+    return parsed_hz
 
 
-def validate_output_cols(output_cols, data: pd.DataFrame):
+def validate_output_cols(
+    output_cols: Optional[List[str]], data: pd.DataFrame
+) -> Optional[List[str]]:
     if output_cols is None or output_cols == []:
         return None
     if len(output_cols) == 1:
@@ -157,7 +161,7 @@ def validate_output_cols(output_cols, data: pd.DataFrame):
 
 def df_to_csv(
     df: pd.DataFrame, filename: str, progress_desc: str = "", verbose: bool = False
-):
+) -> None:
     if verbose:
         chunks = np.array_split(df.index, 1000)
 
@@ -180,7 +184,7 @@ def df_to_csv(
         df.to_csv(filename, index=True)
 
 
-def resolve_path(path):
+def resolve_path(path: str) -> Tuple[Path, str, str]:
     """ Return parent folder, file name and file extension """
     p = Path(path)
     extension = p.suffixes[0]
@@ -190,7 +194,7 @@ def resolve_path(path):
 
 
 class NpEncoder(json.JSONEncoder):
-    def default(self, obj):
+    def default(self, obj: Any) -> Any:
         if isinstance(obj, np.integer):
             return int(obj)
         if isinstance(obj, np.floating):

@@ -102,6 +102,16 @@ Run `ruff check . --select=E9,F63,F7,F82` before submitting changes. Run
 `ruff check .` to see the additional style and complexity findings currently
 reported by CI without blocking changes.
 
+Run mypy in Python 3.8, matching CI's oldest-supported-Python environment:
+
+```bash
+python -m pip install --requirement requirements/typecheck.txt
+python -m mypy
+```
+
+The dedicated requirements file pins the type checker and the NumPy stubs it
+consumes. New and modified functions must have complete annotations.
+
 
 ### Packaging (maintainers only)
 

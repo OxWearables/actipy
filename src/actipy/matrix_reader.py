@@ -34,16 +34,17 @@ See Also
 Binary format documentation: Matrix wearable device specification
 """
 
-import os
-import logging
-import struct
 import binascii
 import csv
-import io
 import gzip
-import zipfile
+import io
+import logging
+import os
+import struct
 import tarfile
-from typing import BinaryIO
+import zipfile
+from typing import IO, List, Optional, TypedDict, Union, cast
+
 from tqdm.auto import tqdm
 
 logging.basicConfig(
@@ -52,7 +53,6 @@ logging.basicConfig(
 )
 LOGGER = logging.getLogger(__name__)
 
-# Constants
 REMARKS_SIZE = 512
 FILE_SIGNATURE = b'MDTC'
 FILE_HEADER_STRUCT = struct.Struct("<4sIHH")
@@ -70,7 +70,18 @@ CSV_HEADER = [
 ]
 
 
-def bin2csv(bin_path: str, csv_path: str) -> None:
+class MatrixMetadata(TypedDict):
+    remarks: str
+    file_signature: bytes
+    num_packets: int
+    acc_range: int
+    gyro_range: int
+
+
+CsvValue = Union[str, int, float]
+
+
+def bin2csv(bin_path: str, csv_path: str) -> MatrixMetadata:
     """
     Converts a binary (.bin) data file from a Matrix wearable device into a
     Comma Separated Values (.csv) file.
@@ -94,8 +105,8 @@ def bin2csv(bin_path: str, csv_path: str) -> None:
     :type bin_path: str
     :param csv_path: Path where the output '.csv' file will be saved.
     :type csv_path: str
-    :return: Implicitly returns None upon successful completion.
-             The primary output is the generated CSV file.
+    :return: Parsed device metadata. The primary output is the generated CSV
+             file.
     """
 
     metadata = extract_metadata(bin_path)
@@ -126,8 +137,8 @@ def bin2csv(bin_path: str, csv_path: str) -> None:
 
     num_offsets = len(offsets)
     file_data_size = len(file_data)
-    file_data = memoryview(file_data)
-    previous_t1 = None
+    file_buffer = memoryview(file_data)
+    previous_t1: Optional[int] = None
 
     with open(csv_path, 'w', encoding='utf-8_sig', newline='') as csvfile:
         writer = csv.writer(csvfile, dialect='excel')
@@ -136,7 +147,7 @@ def bin2csv(bin_path: str, csv_path: str) -> None:
         # Process each packet
         for packet_idx, packet_start in enumerate(tqdm(offsets)):
             packet_end = offsets[packet_idx + 1] if (packet_idx + 1) < num_offsets else file_data_size
-            packet = file_data[packet_start:packet_end]
+            packet = file_buffer[packet_start:packet_end]
 
             # Minimum size check: header is 8s + I*7 = 8 + 28 = 36 bytes
             if len(packet) < 36:
@@ -159,7 +170,7 @@ def bin2csv(bin_path: str, csv_path: str) -> None:
 
             # Verify that sig indeed starts with PACKET_SIGNATURE
             if sig != PACKET_SIGNATURE:
-                LOGGER.debug(f"Invalid packet signature: {sig}. Expected {PACKET_SIGNATURE}. Skipping packet.")
+                LOGGER.debug(f"Invalid packet signature: {sig!r}. Expected {PACKET_SIGNATURE!r}. Skipping packet.")
                 continue
 
             # Compute CRC32 over everything after the first 12 bytes (skip 8 bytes sig + 4 bytes crc field)
@@ -178,16 +189,16 @@ def bin2csv(bin_path: str, csv_path: str) -> None:
                 continue
 
             # Preallocate lists for each column; fill with '' by default
-            acc_x_list = [''] * max_count
-            acc_y_list = [''] * max_count
-            acc_z_list = [''] * max_count
-            gyro_x_list = [''] * max_count
-            gyro_y_list = [''] * max_count
-            gyro_z_list = [''] * max_count
-            body_temp_list = [''] * max_count
-            ambient_temp_list = [''] * max_count
-            hr_raw_list = [''] * max_count
-            hr_list = [''] * max_count
+            acc_x_list: List[CsvValue] = [''] * max_count
+            acc_y_list: List[CsvValue] = [''] * max_count
+            acc_z_list: List[CsvValue] = [''] * max_count
+            gyro_x_list: List[CsvValue] = [''] * max_count
+            gyro_y_list: List[CsvValue] = [''] * max_count
+            gyro_z_list: List[CsvValue] = [''] * max_count
+            body_temp_list: List[CsvValue] = [''] * max_count
+            ambient_temp_list: List[CsvValue] = [''] * max_count
+            hr_raw_list: List[CsvValue] = [''] * max_count
+            hr_list: List[CsvValue] = [''] * max_count
 
             # Fix gap between packets if needed
             if previous_t1 and t0 - previous_t1 == 1:
@@ -209,12 +220,12 @@ def bin2csv(bin_path: str, csv_path: str) -> None:
                 indices = [int(i * step) for i in range(acc_count)]
                 blocks = ACC_STRUCT.iter_unpack(payload[block_start:block_end])
                 for (x, y, z), idx in zip(blocks, indices):
-                    x = x * (acc_scale_pos if x > 0 else acc_scale_neg)
-                    y = y * (acc_scale_pos if y > 0 else acc_scale_neg)
-                    z = z * (acc_scale_pos if z > 0 else acc_scale_neg)
-                    acc_x_list[idx] = f'{x:.6f}'
-                    acc_y_list[idx] = f'{y:.6f}'
-                    acc_z_list[idx] = f'{z:.6f}'
+                    scaled_x = x * (acc_scale_pos if x > 0 else acc_scale_neg)
+                    scaled_y = y * (acc_scale_pos if y > 0 else acc_scale_neg)
+                    scaled_z = z * (acc_scale_pos if z > 0 else acc_scale_neg)
+                    acc_x_list[idx] = f'{scaled_x:.6f}'
+                    acc_y_list[idx] = f'{scaled_y:.6f}'
+                    acc_z_list[idx] = f'{scaled_z:.6f}'
                 block_start = block_end  # update slice_start to the end of the block
 
             # GYRO (gyro_count samples)
@@ -224,12 +235,12 @@ def bin2csv(bin_path: str, csv_path: str) -> None:
                 indices = [int(i * step) for i in range(gyro_count)]
                 blocks = GYRO_STRUCT.iter_unpack(payload[block_start:block_end])
                 for (x, y, z), idx in zip(blocks, indices):
-                    x = x * (gyro_scale_pos if x > 0 else gyro_scale_neg)
-                    y = y * (gyro_scale_pos if y > 0 else gyro_scale_neg)
-                    z = z * (gyro_scale_pos if z > 0 else gyro_scale_neg)
-                    gyro_x_list[idx] = f'{x:.3f}'
-                    gyro_y_list[idx] = f'{y:.3f}'
-                    gyro_z_list[idx] = f'{z:.3f}'
+                    scaled_x = x * (gyro_scale_pos if x > 0 else gyro_scale_neg)
+                    scaled_y = y * (gyro_scale_pos if y > 0 else gyro_scale_neg)
+                    scaled_z = z * (gyro_scale_pos if z > 0 else gyro_scale_neg)
+                    gyro_x_list[idx] = f'{scaled_x:.3f}'
+                    gyro_y_list[idx] = f'{scaled_y:.3f}'
+                    gyro_z_list[idx] = f'{scaled_z:.3f}'
                 block_start = block_end  # update slice_start to the end of the block
 
             # TEMPERATURE (temp_count samples)
@@ -239,10 +250,8 @@ def bin2csv(bin_path: str, csv_path: str) -> None:
                 indices = [int(i * step) for i in range(temp_count)]
                 blocks = TEMP_STRUCT.iter_unpack(payload[block_start:block_end])
                 for (body_temp, ambient_temp), idx in zip(blocks, indices):
-                    body_temp = body_temp * 0.1
-                    ambient_temp = ambient_temp * 0.1
-                    body_temp_list[idx] = body_temp
-                    ambient_temp_list[idx] = ambient_temp
+                    body_temp_list[idx] = body_temp * 0.1
+                    ambient_temp_list[idx] = ambient_temp * 0.1
                 block_start = block_end  # update slice_start to the end of the block
 
             # HEART RATE (hr_count samples)
@@ -266,12 +275,10 @@ def bin2csv(bin_path: str, csv_path: str) -> None:
                     hr_raw_list[i], hr_list[i],
                 ])
 
-            # --- end of processing this packet ---
-
     return metadata
 
 
-def find_offets(file_data: bytearray) -> list:
+def find_offets(file_data: bytearray) -> List[int]:
     """
     Return a list of all indices where PACKET_SIGNATURE begins inside buffer.
     Uses a single-pass .find(…, start) to get O(N) overall.
@@ -287,7 +294,7 @@ def find_offets(file_data: bytearray) -> list:
     return offsets
 
 
-def extract_metadata(bin_path: str) -> dict:
+def extract_metadata(bin_path: str) -> MatrixMetadata:
     """
     Extracts metadata from a Matrix wearable binary file.
 
@@ -316,7 +323,7 @@ def extract_metadata(bin_path: str) -> dict:
         f.close()
 
 
-def _extract_metadata(f: BinaryIO) -> dict:
+def _extract_metadata(f: IO[bytes]) -> MatrixMetadata:
     """
     Reads and parses metadata from an open binary file stream of a Matrix wearable device.
 
@@ -339,11 +346,11 @@ def _extract_metadata(f: BinaryIO) -> dict:
              - 'gyro_range' (int): The gyroscope range from the header.
     :rtype: dict
     """
-    # Read and parse 512‐byte REMARKS
+    # The remarks block precedes the binary header.
     raw_remarks = read_bytes(f, REMARKS_SIZE)
     remarks = parse_remarks(raw_remarks)
 
-    # Read and parse 4sIHH header
+    # The header records the signature, packet count, and sensor ranges.
     raw_file_header = read_bytes(f, FILE_HEADER_STRUCT.size)
     file_signature, num_packets, acc_range, gyro_range = FILE_HEADER_STRUCT.unpack(raw_file_header)
 
@@ -362,7 +369,7 @@ def _extract_metadata(f: BinaryIO) -> dict:
     }
 
 
-def read_bytes(f, num_bytes):
+def read_bytes(f: IO[bytes], num_bytes: int) -> bytes:
     """
     Read exactly num_bytes from file f; if fewer bytes are available,
     return what we have and let caller detect truncation.
@@ -403,12 +410,12 @@ def is_matrix_bin_file(bin_path: str) -> bool:
     """
     try:
         _ = extract_metadata(bin_path)
-    except (ValueError, zipfile.BadZipFile, gzip.BadGzipFile) as e:
+    except (ValueError, zipfile.BadZipFile, gzip.BadGzipFile):
         return False
     return True
 
 
-def open_bin_file(path: str) -> BinaryIO:
+def open_bin_file(path: str) -> IO[bytes]:
     """
     Opens a Matrix wearable binary file, handling potential compression or archiving.
 
@@ -435,7 +442,7 @@ def open_bin_file(path: str) -> BinaryIO:
     # Handle .tar.gz / .tgz
     if path.lower().endswith(".tar.gz") or path.lower().endswith(".tgz"):
         gz_stream = gzip.open(path, "rb")
-        tar = tarfile.open(fileobj=gz_stream, mode="r:*")
+        tar = tarfile.open(fileobj=cast(IO[bytes], gz_stream), mode="r:*")
         members = [m for m in tar.getmembers() if m.name.lower().endswith(".bin")]
         if not members:
             raise ValueError(f"No ‘.bin’ inside tar.gz {path!r}")
@@ -451,7 +458,7 @@ def open_bin_file(path: str) -> BinaryIO:
 
     # Handle .gz (not tar)
     if ext == ".gz":
-        return gzip.open(path, "rb")
+        return cast(IO[bytes], gzip.open(path, "rb"))
 
     # Handle .zip
     if ext == ".zip":
@@ -461,13 +468,9 @@ def open_bin_file(path: str) -> BinaryIO:
             raise ValueError(f"No .bin in ZIP {path!r}")
         if len(bin_names) > 1:
             raise ValueError(f"Multiple .bin in {path!r}: {bin_names}")
-        # Option A: stream only the first 516 bytes (preferred if file very large):
         return zf.open(bin_names[0], "r")
-        # # Option B: read fully into RAM if you need random access:
-        # data = zf.read(bin_names[0])
-        # return io.BytesIO(data)
 
-    # Plain .bin (or “.dat”/“.raw” if you prefer)
+    # Plain binary input.
     if ext == ".bin" or ext in ("", ".dat", ".raw"):
         return open(path, "rb")
 

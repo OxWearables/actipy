@@ -49,6 +49,7 @@ setuptools.setup(
     ],
     packages=setuptools.find_packages(where="src", exclude=("test", "tests")),
     package_dir={"": "src"},
+    package_data={"actipy": ["py.typed"]},
     include_package_data=True,
     install_requires=[
         "numpy>=1.22",
@@ -56,7 +57,6 @@ setuptools.setup(
         "pandas>=1.3",
         "statsmodels>=0.13",
         "tqdm"
-        # "tqdm==4.64.*",
     ],
     extras_require={
         "dev": [
@@ -67,7 +67,7 @@ setuptools.setup(
             "twine",
             "tomli",
             "pytest",
-            "joblib"
+            "joblib",
         ] + (["memray"] if not sys.platform.startswith("win") else []),  # memray not supported on Windows
         "docs": [
             "sphinx>=4.2",

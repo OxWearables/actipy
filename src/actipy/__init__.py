@@ -45,7 +45,8 @@ __maintainer__ = "Shing Chan"
 __maintainer_email__ = "shing.chan@ndph.ox.ac.uk"
 __license__ = "See LICENSE.md"
 
-from actipy.reader import read_device, process
-
 from . import _version
-__version__ = _version.get_versions()['version']
+from .reader import process as process
+from .reader import read_device as read_device
+
+__version__: str = _version.get_versions()['version']  # type: ignore[no-untyped-call]

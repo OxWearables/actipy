@@ -28,38 +28,68 @@ Notes
 - Temporary files are created during parsing and cleaned up automatically
 """
 
-import os
-import time
-import struct
-import shutil
-import tempfile
-import zipfile
 import gzip
+import math
+import os
 import pathlib
+import shutil
+import struct
+import subprocess
+import tempfile
+import time
+import zipfile
+from datetime import datetime
+from numbers import Real
+from typing import IO, Any, Dict, List, Literal, Optional, Tuple, Union, cast
+
 import numpy as np
 import pandas as pd
-import subprocess
 
 from actipy import matrix_reader
 from actipy import processing as P
 
-
 __all__ = ['read_device', 'process']
 
+Info = Dict[str, Any]
+Frequency = Optional[Union[int, float, bool]]
+ResampleFrequency = Optional[Union[Literal['uniform'], int, float, bool]]
+Timestamp = Optional[Union[str, datetime]]
 
-def read_device(input_file,
-                lowpass_hz=20,
-                calibrate_gravity=True,
-                detect_nonwear=True,
-                resample_hz='uniform',
-                start_time=None,
-                end_time=None,
-                skipdays=0,
-                cutdays=0,
-                start_first_complete_minute=False,
-                calibrate_gravity_kwargs=None,
-                flag_nonwear_kwargs=None,
-                verbose=True):
+
+def _validate_resample_frequency(resample_hz: object) -> None:
+    if resample_hz is None or isinstance(resample_hz, bool):
+        return
+    if isinstance(resample_hz, str):
+        if resample_hz == 'uniform':
+            return
+        raise ValueError(
+            "resample_hz must be 'uniform', True, a positive finite number, "
+            "None, or False."
+        )
+    if (
+        not isinstance(resample_hz, Real)
+        or not math.isfinite(resample_hz)
+        or resample_hz <= 0
+    ):
+        raise ValueError(
+            "resample_hz must be 'uniform', True, a positive finite number, "
+            "None, or False."
+        )
+
+
+def read_device(input_file: str,
+                lowpass_hz: Frequency = 20,
+                calibrate_gravity: bool = True,
+                detect_nonwear: bool = True,
+                resample_hz: ResampleFrequency = 'uniform',
+                start_time: Timestamp = None,
+                end_time: Timestamp = None,
+                skipdays: int = 0,
+                cutdays: int = 0,
+                start_first_complete_minute: bool = False,
+                calibrate_gravity_kwargs: Optional[Dict[str, Any]] = None,
+                flag_nonwear_kwargs: Optional[Dict[str, Any]] = None,
+                verbose: bool = True) -> Tuple[pd.DataFrame, Info]:
     """
     Read and process accelerometer device file.
 
@@ -82,7 +112,7 @@ def read_device(input_file,
     :param resample_hz: Target frequency (Hz) to resample the signal. If
         "uniform", uses the device's sample rate to fix sampling errors. Pass
         None or False to disable. Defaults to "uniform".
-    :type resample_hz: str or int or False, optional
+    :type resample_hz: "uniform" or int or float or bool, optional
     :param start_time: Start time to read data (ISO format: "YYYY-MM-DD HH:MM:SS").
         Pass None to read from the beginning. Defaults to None.
     :type start_time: str or datetime, optional
@@ -170,28 +200,22 @@ def read_device(input_file,
     - Non-wear periods are set to NaN if detect_nonwear=True
     """
 
+    _validate_resample_frequency(resample_hz)
     timer = Timer(verbose)
 
     data, info = _read_device(input_file, verbose)
 
     # Filter data by start/end time, if specified
     if start_time is not None:
-        data = data.loc[start_time:]
+        data = data.loc[cast(Any, start_time):]
     if end_time is not None:
-        data = data.loc[:end_time]
+        data = data.loc[:cast(Any, end_time)]
 
     # Skip/cut days, if specified
     if skipdays > 0:
         data = data.loc[data.index[0] + pd.Timedelta(days=skipdays):]
     if cutdays > 0:
         data = data.loc[:data.index[-1] - pd.Timedelta(days=cutdays)]
-
-    # data, info_process = process(data, info_read['SampleRate'],
-    #                              lowpass_hz=lowpass_hz,
-    #                              calibrate_gravity=calibrate_gravity,
-    #                              detect_nonwear=detect_nonwear,
-    #                              resample_hz=resample_hz,
-    #                              verbose=verbose)
 
     # NOTE: Using process() increases data ref count by 1, which increases
     # memory. So instead we just do everything here.
@@ -209,7 +233,7 @@ def read_device(input_file,
 
     if lowpass_hz not in (None, False):
         timer.start("Lowpass filter...")
-        data, info_lowpass = P.lowpass(data, info['SampleRate'], lowpass_hz)
+        data, info_lowpass = P.lowpass(data, info['SampleRate'], cast(float, lowpass_hz))
         info.update(info_lowpass)
         timer.stop()
 
@@ -227,27 +251,27 @@ def read_device(input_file,
         info.update(info_nonwear)
         timer.stop()
 
-    if resample_hz not in (None, False):
+    if resample_hz is not None and resample_hz is not False:
         timer.start("Resampling...")
-        if resample_hz in ('uniform', True):
+        if resample_hz == 'uniform' or resample_hz is True:
             data, info_resample = P.resample(data, info['SampleRate'], start_first_complete_minute=start_first_complete_minute)
         else:
-            data, info_resample = P.resample(data, resample_hz, start_first_complete_minute=start_first_complete_minute)
+            data, info_resample = P.resample(data, cast(float, resample_hz), start_first_complete_minute=start_first_complete_minute)
         info.update(info_resample)
         timer.stop()
 
     return data, info
 
 
-def process(data, sample_rate,
-            lowpass_hz=20,
-            calibrate_gravity=True,
-            detect_nonwear=True,
-            resample_hz='uniform',
-            start_first_complete_minute=False,
-            calibrate_gravity_kwargs=None,
-            flag_nonwear_kwargs=None,
-            verbose=True):
+def process(data: pd.DataFrame, sample_rate: float,
+            lowpass_hz: Frequency = 20,
+            calibrate_gravity: bool = True,
+            detect_nonwear: bool = True,
+            resample_hz: ResampleFrequency = 'uniform',
+            start_first_complete_minute: bool = False,
+            calibrate_gravity_kwargs: Optional[Dict[str, Any]] = None,
+            flag_nonwear_kwargs: Optional[Dict[str, Any]] = None,
+            verbose: bool = True) -> Tuple[pd.DataFrame, Info]:
     """
     Apply processing pipeline to acceleration time-series DataFrame.
 
@@ -273,7 +297,7 @@ def process(data, sample_rate,
     :param resample_hz: Target frequency (Hz) to resample the signal. If
         "uniform", uses the provided sample_rate to fix sampling errors. Pass
         None or False to disable. Defaults to "uniform".
-    :type resample_hz: str or int or False, optional
+    :type resample_hz: "uniform" or int or float or bool, optional
     :param start_first_complete_minute: Whether to start data from the first
         complete minute (with 1 second tolerance). Useful for aligning data to
         minute boundaries. Defaults to False.
@@ -324,13 +348,14 @@ def process(data, sample_rate,
     - Processing is memory-efficient using chunked operations
     """
 
+    _validate_resample_frequency(resample_hz)
     timer = Timer(verbose)
 
-    info = {}
+    info: Info = {}
 
     if lowpass_hz not in (None, False):
         timer.start("Lowpass filter...")
-        data, info_lowpass = P.lowpass(data, sample_rate, lowpass_hz)
+        data, info_lowpass = P.lowpass(data, sample_rate, cast(float, lowpass_hz))
         info.update(info_lowpass)
         timer.stop()
 
@@ -348,19 +373,19 @@ def process(data, sample_rate,
         info.update(info_nonwear)
         timer.stop()
 
-    if resample_hz not in (None, False):
+    if resample_hz is not None and resample_hz is not False:
         timer.start("Resampling...")
-        if resample_hz in ('uniform', True):
+        if resample_hz == 'uniform' or resample_hz is True:
             data, info_resample = P.resample(data, sample_rate, start_first_complete_minute=start_first_complete_minute)
         else:
-            data, info_resample = P.resample(data, resample_hz, start_first_complete_minute=start_first_complete_minute)
+            data, info_resample = P.resample(data, cast(float, resample_hz), start_first_complete_minute=start_first_complete_minute)
         info.update(info_resample)
         timer.stop()
 
     return data, info
 
 
-def _read_device(input_file, verbose=True):
+def _read_device(input_file: str, verbose: bool = True) -> Tuple[pd.DataFrame, Info]:
     """ Internal function that interfaces with the Java parser to read the
     device file. Returns parsed data as a pandas dataframe, and a dict with
     general info.
@@ -374,10 +399,10 @@ def _read_device(input_file, verbose=True):
 
         timer = Timer(verbose)
 
-        # Temporary diretory to store internal runtime files
+        # Temporary directory for intermediate parser files.
         tmpdir = tempfile.mkdtemp()
 
-        info = {}
+        info: Info = {}
         info['Filename'] = input_file
         info['Filesize(MB)'] = round(os.path.getsize(input_file) / (1024 * 1024), 1)
 
@@ -423,7 +448,7 @@ def _read_device(input_file, verbose=True):
             print(f"Error: {e.filename} - {e.strerror}.")
 
 
-def _read_device_matrix(input_file, verbose=True):
+def _read_device_matrix(input_file: str, verbose: bool = True) -> Tuple[pd.DataFrame, Info]:
     """ Internal function that reads a Matrix device file specifically. Returns
     parsed data as a pandas dataframe, and a dict with general info.
     """
@@ -431,10 +456,10 @@ def _read_device_matrix(input_file, verbose=True):
 
         timer = Timer(verbose)
 
-        # Temporary diretory to store internal runtime files
+        # Temporary directory for intermediate conversion files.
         tmpdir = tempfile.mkdtemp()
 
-        info = {}
+        info: Info = {}
         info['Filename'] = input_file
         info['Filesize(MB)'] = round(os.path.getsize(input_file) / (1024 * 1024), 1)
         info['Device'] = 'Matrix'
@@ -478,18 +503,15 @@ def _read_device_matrix(input_file, verbose=True):
 
         # Cleanup, delete temporary directory
         try:
-            # NOTE: For the tmpdir to be deleted, all references to the mmap
-            # object must have been deleted. This includes data_mmap, but also
-            # indirect references like the dataframe (copy=False) or arrays
-            # created with np.asarray.
+            # Remove the temporary directory and its intermediate CSV file.
             shutil.rmtree(tmpdir)
         except OSError as e:
             print(f"Error: {e.filename} - {e.strerror}.")
 
 
 
-def java_read_device(input_file, output_dir, verbose=True):
-    """ Core function that calls the Java method to read device data """
+def java_read_device(input_file: str, output_dir: str, verbose: bool = True) -> Info:
+    """Call the Java reader for a supported device file."""
 
     if input_file.lower().endswith('.cwa'):
         java_reader = 'AxivityReader'
@@ -503,10 +525,10 @@ def java_read_device(input_file, output_dir, verbose=True):
     else:
         raise ValueError(f"Unknown file extension: {input_file}")
 
-    command = [
+    command: List[str] = [
         "java",
         "-XX:ParallelGCThreads=1",
-        "-cp", pathlib.Path(__file__).parent,
+        "-cp", str(pathlib.Path(__file__).parent),
         java_reader,
         "-i", input_file,
         "-o", output_dir
@@ -517,7 +539,7 @@ def java_read_device(input_file, output_dir, verbose=True):
 
     # Load info.txt file. Each line is a key:value pair.
     with open(os.path.join(output_dir, "info.txt"), 'r') as f:
-        info = dict([line.split(':') for line in f.read().splitlines()])
+        info: Info = dict(line.split(':') for line in f.read().splitlines())
 
     info['ReadOK'] = int(info['ReadOK'])
     info['ReadErrors'] = int(info['ReadErrors'])
@@ -526,10 +548,10 @@ def java_read_device(input_file, output_dir, verbose=True):
     return info
 
 
-def decompr(input_file, target_dir):
-    """ Decompress file to target_dir """
+def decompr(input_file: str, target_dir: str) -> str:
+    """Decompress a supported archive into ``target_dir``."""
 
-    # Only .gz and .zip supported so far
+    # The Java readers accept decompressed .gz and .zip inputs.
     filename = os.path.basename(input_file)
     uncompr_filename = os.path.splitext(filename)[0]
     newfile = os.path.join(target_dir, uncompr_filename)
@@ -546,10 +568,10 @@ def decompr(input_file, target_dir):
     return newfile
 
 
-def get_device_info(input_file):
-    """ Get serial number of device """
+def get_device_info(input_file: str) -> Info:
+    """Return the device type and serial number for ``input_file``."""
 
-    info = {}
+    info: Info = {}
 
     if input_file.lower().endswith('.bin'):
         info['Device'] = 'GENEActiv'
@@ -573,19 +595,20 @@ def get_device_info(input_file):
     return info
 
 
-def get_axivity_id(cwafile):
-    """ Get serial number of Axivity device """
+def get_axivity_id(cwafile: str) -> Union[int, str]:
+    """Return the serial number embedded in an Axivity file."""
 
+    f: IO[bytes]
     if cwafile.lower().endswith('.gz'):
-        f = gzip.open(cwafile, 'rb')
+        f = cast(IO[bytes], gzip.open(cwafile, 'rb'))
     else:
         f = open(cwafile, 'rb')
 
     header = f.read(2)
     if header == b'MD':
-        block_size = struct.unpack('H', f.read(2))[0]
-        perform_clear = struct.unpack('B', f.read(1))[0]
-        device_id = struct.unpack('H', f.read(2))[0]
+        struct.unpack('H', f.read(2))  # block size
+        struct.unpack('B', f.read(1))  # perform-clear flag
+        device_id: Union[int, str] = struct.unpack('H', f.read(2))[0]
     else:
         print(f"Could not find device id for {cwafile}")
         device_id = "unknown"
@@ -595,22 +618,22 @@ def get_axivity_id(cwafile):
     return device_id
 
 
-def get_genea_id(binfile):
-    """ Get serial number of GENEActiv device """
+def get_genea_id(binfile: str) -> str:
+    """Return the serial number embedded in a GENEActiv file."""
 
     assert binfile.lower().endswith(".bin"), f"Cannot get device id for {binfile}"
 
-    with open(binfile, 'r') as f:  # 'Universal' newline mode
-        next(f)  # Device Identity
-        device_id = next(f).split(':')[1].rstrip()  # Device Unique Serial Code:011710
+    with open(binfile, 'r') as f:
+        next(f)  # Skip the device identity line.
+        device_id = next(f).split(':')[1].rstrip()  # Device Unique Serial Code field.
 
     return device_id
 
 
-def get_gt3x_id(gt3xfile):
-    """ Get serial number of Actigraph device """
+def get_gt3x_id(gt3xfile: str) -> Optional[str]:
+    """Return the serial number embedded in an ActiGraph archive."""
 
-    # Actigraph is actually a zip file?
+    # ActiGraph files are ZIP containers with an info.txt member.
     assert gt3xfile.lower().endswith(".gt3x") and zipfile.is_zipfile(gt3xfile), f"Cannot get device id for {gt3xfile}"
 
     with zipfile.ZipFile(gt3xfile, 'r') as z:
@@ -620,12 +643,13 @@ def get_gt3x_id(gt3xfile):
                     newline = line.decode("utf-8-sig").strip()
                     if newline.startswith("Serial Number:"):
                         return newline.split(":", 1)[1].strip()
+            return None
         else:
             print("Could not find info.txt file")
             return "unknown"
 
 
-def fix_nonincr_time(data):
+def fix_nonincr_time(data: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
     """ Fix if time non-increasing (rarely occurs) """
     errs = (data.index.to_series().diff() <= pd.Timedelta(0)).sum()
     if errs > 0:
@@ -635,33 +659,33 @@ def fix_nonincr_time(data):
                     .diff()
                     .fillna(pd.Timedelta(1))
                     > pd.Timedelta(0)]
-    return data, errs
+    return data, cast(int, errs)
 
 
-def infer_sample_rate(t):
+def infer_sample_rate(t: pd.DatetimeIndex) -> float:
     """ Like pd.infer_freq but more forgiving """
     tdiff = t.to_series().diff()
     q1, q3 = tdiff.quantile([0.25, 0.75])
     tdiff = tdiff[(q1 <= tdiff) & (tdiff <= q3)]
     dt = tdiff.mean()
     sample_rate = pd.Timedelta('1s') / pd.Timedelta(dt)
-    return sample_rate
+    return cast(float, sample_rate)
 
 
 class Timer:
-    def __init__(self, verbose=True):
+    def __init__(self, verbose: bool = True) -> None:
         self.verbose = verbose
-        self.start_time = None
-        self.msg = None
+        self.start_time: Optional[float] = None
+        self.msg: Optional[str] = None
 
-    def start(self, msg="Starting timer..."):
+    def start(self, msg: str = "Starting timer...") -> None:
         assert self.start_time is None, "Timer is running. Use .stop() to stop it"
         self.start_time = time.perf_counter()
         self.msg = msg
         if self.verbose:
             print(msg, end="\r")
 
-    def stop(self):
+    def stop(self) -> None:
         assert self.start_time is not None, "Timer is not running. Use .start() to start it"
         elapsed_time = time.perf_counter() - self.start_time
         if self.verbose:
