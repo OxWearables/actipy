@@ -15,6 +15,20 @@ PROJECT_ROOT = Path(__file__).parents[1]
 SOURCE_DIR = PROJECT_ROOT / "src" / "actipy"
 FIXTURE_DIR = PROJECT_ROOT / "tests" / "data" / "parser-fixtures"
 MANIFEST = json.loads((FIXTURE_DIR / "manifest.json").read_text())
+SUSTAINED_FIXTURES = {
+    "actigraph-v1.gt3x",
+    "actigraph-v1-middle.gt3x",
+    "actigraph-v1-end.gt3x",
+    "actigraph-leap-v2.gt3x",
+    "actigraph-leap-v2-middle.gt3x",
+    "actigraph-leap-v2-end.gt3x",
+    "axivity-ax3.cwa",
+    "axivity-ax3-middle.cwa",
+    "axivity-ax3-end.cwa",
+    "geneactiv.bin",
+    "geneactiv-middle.bin",
+    "geneactiv-end.bin",
+}
 
 
 @pytest.fixture(scope="session")
@@ -51,6 +65,20 @@ def _sha256(path):
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def test_real_device_fixtures_cover_sustained_windows():
+    window_seconds = MANIFEST["window_seconds"]
+    fixture_specs = {
+        spec["fixture"]: spec
+        for spec in MANIFEST["fixtures"]
+        if spec["fixture"] in SUSTAINED_FIXTURES
+    }
+
+    assert window_seconds == 10 * 60
+    assert set(fixture_specs) == SUSTAINED_FIXTURES
+    for spec in fixture_specs.values():
+        assert spec["rows"] >= spec["sample_rate"] * window_seconds
 
 
 @pytest.mark.parametrize(

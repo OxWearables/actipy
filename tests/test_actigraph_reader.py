@@ -146,6 +146,64 @@ def test_actigraph_reader_decodes_v2_samples_and_timestamps(
     }
 
 
+@pytest.mark.parametrize("usb_record_type", [0, 26])
+def test_actigraph_reader_ignores_one_byte_usb_activity_records(
+        actigraph_reader, tmp_path, usb_record_type):
+    input_file = tmp_path / "usb-event.gt3x"
+    output_dir = tmp_path / "output"
+    timestamp = 1_700_000_000
+    _write_gt3x_v2(
+        input_file,
+        _actigraph_metadata(4, 256),
+        [
+            _actigraph_packet(timestamp, b"\x00", record_type=usb_record_type),
+            _actigraph_packet(
+                timestamp + 1,
+                struct.pack("<hhh", 256, -256, 128),
+            ),
+        ],
+    )
+
+    actigraph_reader(input_file, output_dir)
+
+    data = np.load(output_dir / "data.npy")
+    np.testing.assert_array_equal(
+        data["time"].view("int64"),
+        [(timestamp + 1) * 1_000_000_000],
+    )
+    np.testing.assert_array_equal(
+        np.column_stack((data["x"], data["y"], data["z"])),
+        [[1.0, -1.0, 0.5]],
+    )
+    assert _read_info(output_dir) == {
+        "ReadOK": "1",
+        "ReadErrors": "0",
+        "SampleRate": "4.0",
+    }
+
+
+def test_actigraph_reader_preserves_java_midpoint_rounding(
+        actigraph_reader, tmp_path):
+    input_file = tmp_path / "rounded-v2.gt3x"
+    output_dir = tmp_path / "output"
+    timestamp = 1_700_000_000
+    _write_gt3x_v2(
+        input_file,
+        _actigraph_metadata(30, 256),
+        [_actigraph_packet(timestamp, struct.pack("<hhh", 16, -16, 24))],
+    )
+
+    actigraph_reader(input_file, output_dir)
+
+    data = np.load(output_dir / "data.npy")
+    # Java Math.round sends a negative midpoint toward zero; this expected
+    # value preserves that behavior.
+    np.testing.assert_array_equal(
+        np.column_stack((data["x"], data["y"], data["z"])),
+        np.array([[0.063, -0.062, 0.094]], dtype=np.float32),
+    )
+
+
 def test_actigraph_reader_decodes_v1_packed_sample_pairs(
         actigraph_reader, tmp_path):
     input_file = tmp_path / "sample-v1.gt3x"

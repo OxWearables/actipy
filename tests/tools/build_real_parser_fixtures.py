@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
-"""Build small real-device parser fixtures and independent numerical oracles.
+"""Build real-device parser windows and independent numerical oracles.
 
-The source recordings live in ``data/`` and are intentionally not committed.
-This script selects complete native records from them and decodes the expected
-values without calling actipy or its Java readers.
+The full source recordings are intentionally not committed. This script selects
+complete native records from their beginning, middle, and end, then decodes the
+expected values without calling actipy or its Java readers.
 """
 
 import argparse
+import functools
 import gzip
 import hashlib
+import io
 import json
 import math
+import shutil
 import struct
 import zipfile
+from array import array
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,11 +24,22 @@ import numpy as np
 
 
 PROJECT_ROOT = Path(__file__).parents[2]
-SOURCE_DIR = PROJECT_ROOT / "data"
 OUTPUT_DIR = PROJECT_ROOT / "tests" / "data" / "parser-fixtures"
 DOTNET_UNIX_EPOCH_TICKS = 621355968000000000
+WINDOW_SECONDS = 10 * 60
+SOURCE_FILENAMES = {
+    "actigraph_v1": "sample-actigraph.gt3x",
+    "axivity": "sample-axivity.cwa.gz",
+    "geneactiv": "sample-geneactiv.bin.gz",
+}
+ACTIGRAPH_V2_FILENAME = "sample-actigraph-leap.gt3x"
+WINDOW_SUFFIXES = {"start": "", "middle": "-middle", "end": "-end"}
+
+with (OUTPUT_DIR / "manifest.json").open(encoding="utf-8") as stream:
+    COMMITTED_MANIFEST = json.load(stream)
 
 
+@functools.lru_cache(maxsize=None)
 def sha256(path):
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -33,13 +48,17 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def write_zip_member(archive, name, payload):
+    info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+    info.compress_type = zipfile.ZIP_DEFLATED
+    info.external_attr = 0o600 << 16
+    archive.writestr(info, payload)
+
+
 def write_zip(path, entries):
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for name, payload in entries:
-            info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
-            info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = 0o600 << 16
-            archive.writestr(info, payload)
+            write_zip_member(archive, name, payload)
 
 
 def parse_metadata(payload):
@@ -65,8 +84,48 @@ def save_expected(path, time, columns):
         (name, np.asarray(values, dtype=np.float32))
         for name, values in columns.items()
     )
-    np.savez_compressed(path, **arrays)
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, values in arrays.items():
+            payload = io.BytesIO()
+            np.lib.format.write_array(payload, values, allow_pickle=False)
+            write_zip_member(archive, f"{name}.npy", payload.getvalue())
     return len(arrays["time"]), list(columns)
+
+
+def window_starts(item_count, window_size, alignment=1):
+    if item_count < window_size:
+        raise ValueError(
+            f"Source has {item_count} items, fewer than window size {window_size}"
+        )
+    latest_start = item_count - window_size
+    starts = {
+        "start": 0,
+        "middle": ((latest_start // 2) // alignment) * alignment,
+        "end": (latest_start // alignment) * alignment,
+    }
+    if len(set(starts.values())) != len(starts):
+        raise ValueError("Source is too short for distinct start/middle/end windows")
+    return starts
+
+
+def update_metadata(payload, changes):
+    has_bom = payload.startswith(b"\xef\xbb\xbf")
+    text = payload.decode("utf-8-sig")
+    newline = "\r\n" if "\r\n" in text else "\n"
+    trailing_newline = text.endswith(("\r\n", "\n"))
+    updated = []
+    found = set()
+    for line in text.splitlines():
+        key = line.split(":", 1)[0]
+        if key in changes:
+            line = f"{key}: {changes[key]}"
+            found.add(key)
+        updated.append(line)
+    missing = set(changes) - found
+    if missing:
+        raise ValueError(f"Metadata fields not found: {sorted(missing)}")
+    result = newline.join(updated) + (newline if trailing_newline else "")
+    return (b"\xef\xbb\xbf" if has_bom else b"") + result.encode("utf-8")
 
 
 def decode_actigraph_v1(metadata_payload, activity):
@@ -106,17 +165,40 @@ def decode_actigraph_v1(metadata_payload, activity):
     return time, columns, sample_rate, serial
 
 
-def read_packets(stream, count):
-    packets = []
-    for _ in range(count):
-        header = stream.read(8)
-        if len(header) != 8:
+def index_activity2_packets(payload):
+    activity_offsets = array("I")
+    position = 0
+    while position < len(payload):
+        if len(payload) - position < 8:
             raise ValueError("Actigraph V2 source ended inside a packet header")
-        _, _, _, size = struct.unpack("<BBIH", header)
-        packet = header + stream.read(size + 1)
-        if len(packet) != 9 + size:
+        separator, record_type, _, size = struct.unpack_from(
+            "<BBIH", payload, position
+        )
+        packet_end = position + 9 + size
+        if packet_end > len(payload):
             raise ValueError("Actigraph V2 source ended inside a packet")
+        if separator != 0x1E:
+            raise ValueError(f"Invalid packet separator at byte {position}")
+        if record_type == 26 and size > 1:
+            activity_offsets.append(position)
+        position = packet_end
+    return activity_offsets
+
+
+def split_packets(payload):
+    packets = []
+    position = 0
+    while position < len(payload):
+        header = payload[position:position + 8]
+        if len(header) != 8:
+            raise ValueError("Actigraph V2 selection ends inside a packet header")
+        _, _, _, size = struct.unpack("<BBIH", header)
+        packet_end = position + 9 + size
+        packet = payload[position:packet_end]
+        if len(packet) != 9 + size:
+            raise ValueError("Actigraph V2 selection ends inside a packet")
         packets.append(packet)
+        position = packet_end
     return packets
 
 
@@ -287,12 +369,12 @@ def decode_geneactiv(payload):
 
 
 def manifest_entry(
-        fixture, expected, source, rows, fields, sample_rate,
+        fixture, expected, source, *, rows, fields, sample_rate,
         device, device_id, selection):
     return {
         "fixture": fixture.name,
         "expected": expected.name,
-        "source": str(source.relative_to(PROJECT_ROOT)),
+        "source": source.name,
         "fixture_sha256": sha256(fixture),
         "expected_sha256": sha256(expected),
         "source_sha256": sha256(source),
@@ -307,76 +389,264 @@ def manifest_entry(
     }
 
 
-def build_actigraph_v1():
-    source = SOURCE_DIR / "sample-actigraph.gt3x"
-    fixture = OUTPUT_DIR / "actigraph-v1.gt3x"
-    expected = OUTPUT_DIR / "actigraph-v1-expected.npz"
+def build_actigraph_v1(source):
     with zipfile.ZipFile(source) as archive:
         metadata = archive.read("info.txt")
-        activity = archive.read("activity.bin")[:900]
-    write_zip(fixture, (("info.txt", metadata), ("activity.bin", activity), ("lux.bin", b"")))
-    time, columns, sample_rate, device_id = decode_actigraph_v1(metadata, activity)
-    rows, fields = save_expected(expected, time, columns)
-    return manifest_entry(
-        fixture, expected, source, rows, fields, sample_rate,
-        "Actigraph", device_id,
-        "First 100 complete nine-byte sample pairs (200 samples).",
-    )
+        all_activity = archive.read("activity.bin")
+    source_metadata = parse_metadata(metadata)
+    sample_rate = float(source_metadata["Sample Rate"])
+    start_ticks = int(source_metadata["Start Date"])
+    pair_count = int(sample_rate * WINDOW_SECONDS) // 2
+    total_pairs = len(all_activity) // 9
+    pair_alignment = int(sample_rate) // math.gcd(int(sample_rate), 2)
+    starts = window_starts(total_pairs, pair_count, pair_alignment)
+    entries = []
+    for label, start_pair in starts.items():
+        suffix = WINDOW_SUFFIXES[label]
+        fixture = OUTPUT_DIR / f"actigraph-v1{suffix}.gt3x"
+        expected = OUTPUT_DIR / f"actigraph-v1{suffix}-expected.npz"
+        start_sample = start_pair * 2
+        window_start_ticks = (
+            start_ticks + int(start_sample / sample_rate) * 10_000_000
+        )
+        window_stop_ticks = window_start_ticks + WINDOW_SECONDS * 10_000_000
+        window_metadata = update_metadata(
+            metadata,
+            {
+                "Start Date": window_start_ticks,
+                "Stop Date": window_stop_ticks,
+            },
+        )
+        activity = all_activity[start_pair * 9:(start_pair + pair_count) * 9]
+        write_zip(
+            fixture,
+            (("info.txt", window_metadata),
+             ("activity.bin", activity),
+             ("lux.bin", b"")),
+        )
+        time, columns, selected_rate, device_id = decode_actigraph_v1(
+            window_metadata, activity
+        )
+        rows, fields = save_expected(expected, time, columns)
+        entries.append(manifest_entry(
+            fixture,
+            expected,
+            source,
+            rows=rows,
+            fields=fields,
+            sample_rate=selected_rate,
+            device="Actigraph",
+            device_id=device_id,
+            selection=(
+                f"Ten-minute {label} window of complete nine-byte sample pairs."
+            ),
+        ))
+    return entries
 
 
-def build_actigraph_v2():
-    source = SOURCE_DIR / "sample-actigraph-leap.gt3x"
-    fixture = OUTPUT_DIR / "actigraph-leap-v2.gt3x"
-    expected = OUTPUT_DIR / "actigraph-leap-v2-expected.npz"
+def build_actigraph_v2(source):
     with zipfile.ZipFile(source) as archive:
         metadata = archive.read("info.txt")
-        with archive.open("log.bin") as stream:
-            packets = read_packets(stream, 8)
-    write_zip(fixture, (("info.txt", metadata), ("log.bin", b"".join(packets))))
-    time, columns, sample_rate, device_id = decode_actigraph_v2(metadata, packets)
-    rows, fields = save_expected(expected, time, columns)
-    return manifest_entry(
-        fixture, expected, source, rows, fields, sample_rate,
-        "Actigraph", device_id,
-        "First eight complete packets: one type 6, two type 2, and five type 26.",
+        log = archive.read("log.bin")
+    source_metadata = parse_metadata(metadata)
+    sample_rate = float(source_metadata["Sample Rate"])
+    activity_offsets = index_activity2_packets(log)
+    first_payload_size = struct.unpack_from(
+        "<H", log, activity_offsets[0] + 6
+    )[0]
+    samples_per_packet = first_payload_size // 6
+    window_packets = math.ceil(
+        WINDOW_SECONDS * sample_rate / samples_per_packet
     )
+    starts = window_starts(len(activity_offsets), window_packets)
+    entries = []
+    for label, activity_start in starts.items():
+        suffix = WINDOW_SUFFIXES[label]
+        fixture = OUTPUT_DIR / f"actigraph-leap-v2{suffix}.gt3x"
+        expected = OUTPUT_DIR / f"actigraph-leap-v2{suffix}-expected.npz"
+        byte_start = 0 if label == "start" else activity_offsets[activity_start]
+        next_activity = activity_start + window_packets
+        byte_end = (
+            activity_offsets[next_activity]
+            if next_activity < len(activity_offsets)
+            else len(log)
+        )
+        packets = split_packets(log[byte_start:byte_end])
+        write_zip(
+            fixture,
+            (("info.txt", metadata), ("log.bin", b"".join(packets))),
+        )
+        time, columns, selected_rate, device_id = decode_actigraph_v2(
+            metadata, packets
+        )
+        rows, fields = save_expected(expected, time, columns)
+        entries.append(manifest_entry(
+            fixture,
+            expected,
+            source,
+            rows=rows,
+            fields=fields,
+            sample_rate=selected_rate,
+            device="Actigraph",
+            device_id=device_id,
+            selection=(
+                f"Ten-minute {label} window of complete V2 packets, including "
+                "interleaved non-activity records."
+            ),
+        ))
+    return entries
 
 
-def build_axivity():
-    source = SOURCE_DIR / "sample-axivity.cwa.gz"
-    fixture = OUTPUT_DIR / "axivity-ax3.cwa"
-    expected = OUTPUT_DIR / "axivity-ax3-expected.npz"
+def retain_actigraph_v2():
+    entries = [
+        item for item in COMMITTED_MANIFEST["fixtures"]
+        if item["fixture"].startswith("actigraph-leap-v2")
+    ]
+    if not entries:
+        raise ValueError("Committed manifest has no ActiGraph V2 fixtures")
+    committed_dir = PROJECT_ROOT / "tests" / "data" / "parser-fixtures"
+    if OUTPUT_DIR != committed_dir:
+        for entry in entries:
+            for key in ("fixture", "expected"):
+                shutil.copy2(committed_dir / entry[key], OUTPUT_DIR / entry[key])
+    return entries
+
+
+def build_axivity(source):
+    with source.open("rb") as compressed:
+        compressed.seek(-4, 2)
+        uncompressed_size = struct.unpack("<I", compressed.read(4))[0]
+    total_blocks = uncompressed_size // 512
+    data_block_count = total_blocks - 2
+
     with gzip.open(source, "rb") as stream:
-        payload = stream.read(5 * 512)
-    fixture.write_bytes(payload)
-    time, columns, sample_rate, device_id = decode_axivity(payload)
-    rows, fields = save_expected(expected, time, columns)
-    return manifest_entry(
-        fixture, expected, source, rows, fields, sample_rate,
-        "Axivity", device_id,
-        "Metadata and reserved blocks followed by three packed AX3 data blocks.",
-    )
+        prefix = stream.read(3 * 512)
+        if prefix[:2] != b"MD" or prefix[512:514] != b"\xff\xff":
+            raise ValueError("Unexpected Axivity metadata/reserved block layout")
+        first_data_block = prefix[2 * 512:]
+        if first_data_block[:2] != b"AX":
+            raise ValueError("Could not find first Axivity data block")
+        rate_code = first_data_block[24]
+        sample_rate = 3200.0 / (1 << (15 - (rate_code & 15)))
+        samples_per_block = struct.unpack_from("<H", first_data_block, 28)[0]
+        window_blocks = math.ceil(
+            WINDOW_SECONDS * sample_rate / samples_per_block
+        )
+        starts = window_starts(data_block_count, window_blocks)
+        selected_blocks = {
+            "start": first_data_block + stream.read((window_blocks - 1) * 512)
+        }
+        for label in ("middle", "end"):
+            stream.seek((2 + starts[label]) * 512)
+            selected_blocks[label] = stream.read(window_blocks * 512)
+
+    header = prefix[:2 * 512]
+    entries = []
+    for label in starts:
+        suffix = WINDOW_SUFFIXES[label]
+        fixture = OUTPUT_DIR / f"axivity-ax3{suffix}.cwa"
+        expected = OUTPUT_DIR / f"axivity-ax3{suffix}-expected.npz"
+        data_blocks = selected_blocks[label]
+        if len(data_blocks) != window_blocks * 512:
+            raise ValueError(f"Incomplete Axivity {label} window")
+        payload = header + data_blocks
+        fixture.write_bytes(payload)
+        time, columns, selected_rate, device_id = decode_axivity(payload)
+        rows, fields = save_expected(expected, time, columns)
+        entries.append(manifest_entry(
+            fixture,
+            expected,
+            source,
+            rows=rows,
+            fields=fields,
+            sample_rate=selected_rate,
+            device="Axivity",
+            device_id=device_id,
+            selection=(
+                "Metadata and reserved blocks followed by a ten-minute "
+                f"{label} window of complete packed AX3 blocks."
+            ),
+        ))
+    return entries
 
 
-def build_geneactiv():
-    source = SOURCE_DIR / "sample-geneactiv.bin.gz"
-    fixture = OUTPUT_DIR / "geneactiv.bin"
-    expected = OUTPUT_DIR / "geneactiv-expected.npz"
-    with gzip.open(source, "rt", encoding="ascii") as stream:
-        lines = [next(stream).rstrip("\n\r") for _ in range(89)]
-    page_count_index = next(
-        index for index, line in enumerate(lines[:59])
-        if line.startswith("Number of Pages:")
-    )
-    lines[page_count_index] = "Number of Pages:3"
-    payload = ("\n".join(lines) + "\n").encode("ascii")
-    fixture.write_bytes(payload)
-    time, columns, sample_rate, device_id = decode_geneactiv(payload)
-    rows, fields = save_expected(expected, time, columns)
-    return manifest_entry(
-        fixture, expected, source, rows, fields, sample_rate,
-        "GENEActiv", device_id,
-        "Original 59-line header and first three complete pages; page count changed to 3.",
+def build_geneactiv(source):
+    with gzip.open(source, "rb") as stream:
+        header = [next(stream).rstrip(b"\n\r") for _ in range(59)]
+        page_count_index = next(
+            index for index, line in enumerate(header)
+            if line.startswith(b"Number of Pages:")
+        )
+        total_pages = int(header[page_count_index].split(b":", 1)[1])
+        first_page = [next(stream).rstrip(b"\n\r") for _ in range(10)]
+        sample_rate = float(first_page[8].split(b":", 1)[1])
+        samples_per_page = len(first_page[9]) // 12
+        window_pages = math.ceil(
+            WINDOW_SECONDS * sample_rate / samples_per_page
+        )
+        starts = window_starts(total_pages, window_pages)
+        page_ranges = {
+            label: range(start, start + window_pages)
+            for label, start in starts.items()
+        }
+        selected_pages = {label: [] for label in starts}
+        selected_pages["start"].extend(first_page)
+
+        for page_index in range(1, total_pages):
+            labels = [
+                label for label, page_range in page_ranges.items()
+                if page_index in page_range
+            ]
+            if labels:
+                page = [next(stream).rstrip(b"\n\r") for _ in range(10)]
+                for label in labels:
+                    selected_pages[label].extend(page)
+            else:
+                for _ in range(10):
+                    next(stream)
+
+    entries = []
+    for label, pages in selected_pages.items():
+        if len(pages) != window_pages * 10:
+            raise ValueError(f"Incomplete GENEActiv {label} window")
+        suffix = WINDOW_SUFFIXES[label]
+        fixture = OUTPUT_DIR / f"geneactiv{suffix}.bin"
+        expected = OUTPUT_DIR / f"geneactiv{suffix}-expected.npz"
+        window_header = list(header)
+        window_header[page_count_index] = (
+            f"Number of Pages:{window_pages}".encode("ascii")
+        )
+        payload = b"\n".join(window_header + pages) + b"\n"
+        fixture.write_bytes(payload)
+        time, columns, selected_rate, device_id = decode_geneactiv(payload)
+        rows, fields = save_expected(expected, time, columns)
+        entries.append(manifest_entry(
+            fixture,
+            expected,
+            source,
+            rows=rows,
+            fields=fields,
+            sample_rate=selected_rate,
+            device="GENEActiv",
+            device_id=device_id,
+            selection=(
+                f"Original header and a ten-minute {label} window of complete "
+                f"pages; page count changed to {window_pages}."
+            ),
+        ))
+    return entries
+
+
+def find_source_dir(requested):
+    candidates = [requested] if requested else [PROJECT_ROOT.parent, PROJECT_ROOT / "data"]
+    for candidate in candidates:
+        if candidate and all((candidate / name).is_file()
+                             for name in SOURCE_FILENAMES.values()):
+            return candidate.resolve()
+    searched = ", ".join(str(path) for path in candidates if path)
+    required = ", ".join(SOURCE_FILENAMES.values())
+    raise FileNotFoundError(
+        f"Could not find parser corpus in {searched}; required files: {required}"
     )
 
 
@@ -387,18 +657,33 @@ def main():
         "--output-dir", type=Path, default=OUTPUT_DIR,
         help="Directory for reduced fixtures, goldens, and manifest.",
     )
+    parser.add_argument(
+        "--source-dir", type=Path,
+        help="Directory containing the three full real-device recordings.",
+    )
     args = parser.parse_args()
+    source_dir = find_source_dir(args.source_dir)
     OUTPUT_DIR = args.output_dir.resolve()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    fixtures = [
-        build_actigraph_v1(),
-        build_actigraph_v2(),
-        build_axivity(),
-        build_geneactiv(),
-    ]
+    fixtures = []
+    fixtures.extend(build_actigraph_v1(
+        source_dir / SOURCE_FILENAMES["actigraph_v1"]
+    ))
+    actigraph_v2_source = source_dir / ACTIGRAPH_V2_FILENAME
+    if actigraph_v2_source.is_file():
+        fixtures.extend(build_actigraph_v2(actigraph_v2_source))
+    else:
+        fixtures.extend(retain_actigraph_v2())
+    fixtures.extend(build_axivity(
+        source_dir / SOURCE_FILENAMES["axivity"]
+    ))
+    fixtures.extend(build_geneactiv(
+        source_dir / SOURCE_FILENAMES["geneactiv"]
+    ))
     manifest = {
-        "format_version": 1,
+        "format_version": 2,
+        "window_seconds": WINDOW_SECONDS,
         "oracle": (
             "Expected arrays are decoded by the standalone format-specific "
             "implementations in tests/tools/build_real_parser_fixtures.py; "

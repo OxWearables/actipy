@@ -33,8 +33,11 @@ def _geneactiv_header(gains, offsets, page_count):
     return lines
 
 
-def _encode_sample(x, y, z):
-    return "".join(f"{value & 0xFFF:03X}" for value in (x, y, z)) + "000"
+def _encode_sample(x, y, z, auxiliary=0):
+    return (
+        "".join(f"{value & 0xFFF:03X}" for value in (x, y, z))
+        + f"{auxiliary & 0xFFF:03X}"
+    )
 
 
 def _geneactiv_block(sequence, timestamp, temperature, frequency, payload):
@@ -229,3 +232,34 @@ def test_geneactiv_reader_decodes_most_negative_12_bit_value(
         "ReadErrors": "0",
         "SampleRate": "4.0",
     }
+
+
+def test_geneactiv_reader_preserves_sample_stride_with_auxiliary_bits(
+        geneactiv_reader, tmp_path):
+    input_file = tmp_path / "auxiliary-bits.bin"
+    output_dir = tmp_path / "output"
+    blocks = [
+        _geneactiv_block(
+            0,
+            "2024-01-02 03:04:05:000",
+            20,
+            4,
+            _encode_sample(1, 2, 3, auxiliary=0xFFE)
+            + _encode_sample(4, 5, 6, auxiliary=0x004),
+        ),
+    ]
+    _write_geneactiv(input_file, (100, 100, 100), (0, 0, 0), blocks)
+
+    geneactiv_reader(input_file, output_dir)
+
+    data = np.load(output_dir / "data.npy")
+    np.testing.assert_array_equal(data["x"], [1.0, 4.0])
+    np.testing.assert_array_equal(data["y"], [2.0, 5.0])
+    np.testing.assert_array_equal(data["z"], [3.0, 6.0])
+    np.testing.assert_array_equal(
+        data["time"],
+        np.array(
+            ["2024-01-02T03:04:05.000", "2024-01-02T03:04:05.250"],
+            dtype="datetime64[ns]",
+        ),
+    )
