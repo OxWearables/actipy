@@ -4,10 +4,9 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.time.DateTimeException;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.concurrent.TimeUnit;
 
 
@@ -20,8 +19,7 @@ public class GENEActivReader {
     private static final int HEX_CHARACTERS_PER_SAMPLE = 12;
     private static final int PAGE_PAYLOAD_LENGTH =
             SAMPLES_PER_PAGE * HEX_CHARACTERS_PER_SAMPLE;
-    private static final DateTimeFormatter PAGE_TIME_FORMAT =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss:SSS");
+    private static final int INPUT_BUFFER_SIZE = 64 * 1024;
 
     private static final class Calibration {
         final double[] gains = new double[3];
@@ -55,9 +53,11 @@ public class GENEActivReader {
             ReaderSupport.Options options,
             ReaderSupport.Result result) throws Exception {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                     new FileInputStream(options.inputFile), StandardCharsets.US_ASCII))) {
+                     new FileInputStream(options.inputFile), StandardCharsets.US_ASCII),
+                     INPUT_BUFFER_SIZE)) {
             Calibration calibration = readCalibration(reader);
             validateCalibration(calibration);
+            short[] decodedSamples = new short[SAMPLES_PER_PAGE * 3];
 
             try (NpyWriter writer = new NpyWriter(
                     options.dataPath(), NpyWriter.Layout.XYZT)) {
@@ -94,7 +94,7 @@ public class GENEActivReader {
                     }
 
                     int pageSamples = writePageSamples(
-                            page, calibration, writer, result);
+                            page, calibration, decodedSamples, writer, result);
                     if (pageSamples > 0) {
                         validPageCount++;
                         samplesWritten += pageSamples;
@@ -197,9 +197,7 @@ public class GENEActivReader {
         }
         try {
             String timestamp = valueAfterColon(lines[3], "Page Time");
-            long startTimeMillis = LocalDateTime.parse(timestamp, PAGE_TIME_FORMAT)
-                    .toInstant(ZoneOffset.UTC)
-                    .toEpochMilli();
+            long startTimeMillis = parsePageTime(timestamp);
             double temperature = Double.parseDouble(
                     valueAfterColon(lines[5], "Temperature"));
             double sampleRate = Double.parseDouble(
@@ -213,7 +211,7 @@ public class GENEActivReader {
             }
             return new PageHeader(
                     startTimeMillis, temperature, sampleRate, lines[9]);
-        } catch (NumberFormatException | DateTimeParseException error) {
+        } catch (NumberFormatException | DateTimeException error) {
             throw new ReaderSupport.FormatException(
                     "Invalid page timestamp or numeric metadata", error);
         }
@@ -222,10 +220,11 @@ public class GENEActivReader {
     private static int writePageSamples(
             PageHeader page,
             Calibration calibration,
+            short[] decodedSamples,
             NpyWriter writer,
             ReaderSupport.Result result) throws IOException {
         if (page.payload.length() != PAGE_PAYLOAD_LENGTH
-                || !isHexadecimal(page.payload)) {
+                || !decodePageSamples(page.payload, decodedSamples)) {
             result.recordRecoverableError(
                     "Skipping invalid GENEActiv page payload: expected "
                     + PAGE_PAYLOAD_LENGTH + " hexadecimal characters");
@@ -233,10 +232,10 @@ public class GENEActivReader {
         }
 
         for (int sampleIndex = 0; sampleIndex < SAMPLES_PER_PAGE; sampleIndex++) {
-            int position = sampleIndex * HEX_CHARACTERS_PER_SAMPLE;
-            int xRaw = signed12Bit(page.payload, position);
-            int yRaw = signed12Bit(page.payload, position + 3);
-            int zRaw = signed12Bit(page.payload, position + 6);
+            int position = sampleIndex * 3;
+            int xRaw = decodedSamples[position];
+            int yRaw = decodedSamples[position + 1];
+            int zRaw = decodedSamples[position + 2];
             double x = (xRaw * 100.0d - calibration.offsets[0])
                     / calibration.gains[0];
             double y = (yRaw * 100.0d - calibration.offsets[1])
@@ -255,13 +254,74 @@ public class GENEActivReader {
         return SAMPLES_PER_PAGE;
     }
 
-    private static boolean isHexadecimal(String value) {
-        for (int index = 0; index < value.length(); index++) {
-            if (Character.digit(value.charAt(index), 16) < 0) {
-                return false;
+    private static boolean decodePageSamples(String payload, short[] decodedSamples) {
+        int decodedIndex = 0;
+        for (int sample = 0; sample < SAMPLES_PER_PAGE; sample++) {
+            int sampleStart = sample * HEX_CHARACTERS_PER_SAMPLE;
+            for (int component = 0; component < 4; component++) {
+                int position = sampleStart + component * 3;
+                int high = hexDigit(payload.charAt(position));
+                int middle = hexDigit(payload.charAt(position + 1));
+                int low = hexDigit(payload.charAt(position + 2));
+                if ((high | middle | low) < 0) {
+                    return false;
+                }
+                if (component < 3) {
+                    int rawValue = (high << 8) | (middle << 4) | low;
+                    decodedSamples[decodedIndex++] = (short) (
+                            rawValue >= 2048 ? rawValue - 4096 : rawValue);
+                }
             }
         }
         return true;
+    }
+
+    private static int hexDigit(char value) {
+        if (value >= '0' && value <= '9') {
+            return value - '0';
+        }
+        if (value >= 'A' && value <= 'F') {
+            return value - 'A' + 10;
+        }
+        if (value >= 'a' && value <= 'f') {
+            return value - 'a' + 10;
+        }
+        return -1;
+    }
+
+    private static long parsePageTime(String timestamp) {
+        if (timestamp.length() != 23
+                || timestamp.charAt(4) != '-'
+                || timestamp.charAt(7) != '-'
+                || timestamp.charAt(10) != ' '
+                || timestamp.charAt(13) != ':'
+                || timestamp.charAt(16) != ':'
+                || timestamp.charAt(19) != ':') {
+            throw new DateTimeException("Invalid GENEActiv page timestamp");
+        }
+
+        int year = fixedDecimal(timestamp, 0, 4);
+        int month = fixedDecimal(timestamp, 5, 2);
+        int day = fixedDecimal(timestamp, 8, 2);
+        int hour = fixedDecimal(timestamp, 11, 2);
+        int minute = fixedDecimal(timestamp, 14, 2);
+        int second = fixedDecimal(timestamp, 17, 2);
+        int millis = fixedDecimal(timestamp, 20, 3);
+        return LocalDateTime.of(
+                year, month, day, hour, minute, second, millis * 1_000_000)
+                .toEpochSecond(ZoneOffset.UTC) * 1000 + millis;
+    }
+
+    private static int fixedDecimal(String value, int offset, int length) {
+        int parsed = 0;
+        for (int index = offset; index < offset + length; index++) {
+            char digit = value.charAt(index);
+            if (digit < '0' || digit > '9') {
+                throw new DateTimeException("Invalid GENEActiv page timestamp");
+            }
+            parsed = parsed * 10 + digit - '0';
+        }
+        return parsed;
     }
 
     private static String requireLine(BufferedReader reader, String description)
@@ -304,8 +364,4 @@ public class GENEActivReader {
         }
     }
 
-    private static int signed12Bit(String data, int position) {
-        int rawValue = Integer.parseInt(data.substring(position, position + 3), 16);
-        return rawValue >= 2048 ? rawValue - 4096 : rawValue;
-    }
 }

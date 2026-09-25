@@ -185,8 +185,13 @@ def test_geneactiv_reader_decodes_samples_and_page_metadata(
     }
 
 
+@pytest.mark.parametrize(
+    "corrupt_sample",
+    ["ZZZ000000000", "000000000Z00"],
+    ids=["axis", "auxiliary"],
+)
 def test_geneactiv_reader_skips_entire_corrupt_page(
-        geneactiv_reader, tmp_path):
+        geneactiv_reader, tmp_path, corrupt_sample):
     input_file = tmp_path / "corrupt-page.bin"
     output_dir = tmp_path / "output"
     blocks = [
@@ -197,7 +202,7 @@ def test_geneactiv_reader_skips_entire_corrupt_page(
             2,
             _full_page_payload(
                 _encode_sample(1, 2, 3),
-                "ZZZ000000000",
+                corrupt_sample,
                 _encode_sample(7, 8, 9),
             ),
         ),
@@ -255,7 +260,7 @@ def test_geneactiv_reader_decodes_most_negative_12_bit_value(
     }
 
 
-def test_geneactiv_reader_preserves_sample_stride_with_auxiliary_bits(
+def test_geneactiv_reader_preserves_sample_stride_with_lowercase_auxiliary_bits(
         geneactiv_reader, tmp_path):
     input_file = tmp_path / "auxiliary-bits.bin"
     output_dir = tmp_path / "output"
@@ -268,7 +273,7 @@ def test_geneactiv_reader_preserves_sample_stride_with_auxiliary_bits(
             _full_page_payload(
                 _encode_sample(1, 2, 3, auxiliary=0xFFE),
                 _encode_sample(4, 5, 6, auxiliary=0x004),
-            ),
+            ).lower(),
         ),
     ]
     _write_geneactiv(input_file, (100, 100, 100), (0, 0, 0), blocks)
