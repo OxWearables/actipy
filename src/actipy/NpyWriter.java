@@ -1,459 +1,450 @@
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.charset.StandardCharsets;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.zip.GZIPOutputStream;
 
 
-public class NpyWriter {
+public class NpyWriter implements AutoCloseable {
 
-	private static final int BUFSIZE = 8192;
-	private static final ByteOrder NATIVE_BYTE_ORDER = ByteOrder.nativeOrder();
-	private static final char NUMPY_BYTE_ORDER = NATIVE_BYTE_ORDER==ByteOrder.BIG_ENDIAN ? '>' : '<';
-    private static final boolean COMPRESS = false;
-	private final static byte NPY_MAJ_VERSION = 1;
-	private final static byte NPY_MIN_VERSION = 0;
-	private final static int BLOCK_SIZE = 16;
-	private final static int HEADER_SIZE = BLOCK_SIZE * 16;
-	private final static byte[] NPY_HEADER;
-	private final static String[] XYZ_FIELDS = {"time", "x", "y", "z"};
-	private final static String[] XYZT_FIELDS = {"time", "x", "y", "z", "temperature"};
-	private final static String[] XYZTL_FIELDS = {
-			"time", "x", "y", "z", "temperature", "light"};
-	private final static String[] XYZ_GYRO_TL_FIELDS = {
-			"time", "x", "y", "z", "gyro_x", "gyro_y", "gyro_z",
-			"temperature", "light"};
-	private enum PrimitiveLayout { UNKNOWN, XYZ, XYZT, XYZTL, XYZ_GYRO_TL }
-	static {
-		byte[] hdr = "XNUMPY".getBytes(StandardCharsets.US_ASCII);
-		hdr[0] = (byte) 0x93;
-		NPY_HEADER = hdr;
-	}
+    private static final int ROWS_PER_BUFFER = 8192;
+    private static final ByteOrder NATIVE_BYTE_ORDER = ByteOrder.nativeOrder();
+    private static final char NUMPY_BYTE_ORDER =
+            NATIVE_BYTE_ORDER == ByteOrder.BIG_ENDIAN ? '>' : '<';
+    private static final byte NPY_MAJ_VERSION = 1;
+    private static final byte NPY_MIN_VERSION = 0;
+    private static final int BLOCK_SIZE = 16;
+    private static final int HEADER_SIZE = BLOCK_SIZE * 16;
+    private static final byte[] NPY_HEADER = new byte[] {
+            (byte) 0x93, 'N', 'U', 'M', 'P', 'Y'};
 
-    private String outputFile;
-	private final Map<String, String> itemNamesAndTypes;
-	private final PrimitiveLayout primitiveLayout;
-	private ByteBuffer buf;
-	private File file;
-    private RandomAccessFile raf;
-	private int linesWritten = 0;
+    public enum Layout {
+        XYZ(new String[] {"x", "y", "z"}),
+        XYZT(new String[] {"x", "y", "z", "temperature"}),
+        XYZTL(new String[] {"x", "y", "z", "temperature", "light"}),
+        XYZ_GYRO_TL(new String[] {
+                "x", "y", "z", "gyro_x", "gyro_y", "gyro_z",
+                "temperature", "light"});
 
-	public static class SchemaMismatchException extends IllegalStateException {
-		private static final long serialVersionUID = 1L;
+        private final String[] floatFields;
 
-		SchemaMismatchException(String message) {
-			super(message);
-		}
-	}
+        Layout(String[] floatFields) {
+            this.floatFields = floatFields;
+        }
 
+        private Map<String, String> schema() {
+            Map<String, String> schema = new LinkedHashMap<String, String>();
+            schema.put("time", "Datetime");
+            for (String field : floatFields) {
+                schema.put(field, "Float");
+            }
+            return schema;
+        }
+    }
 
-	public NpyWriter(String outputFile, Map<String, String> itemNamesAndTypes) {
+    private enum FieldType {
+        INTEGER("Integer", Integer.BYTES, "i4", Integer.class) {
+            void put(ByteBuffer buffer, Object value) {
+                buffer.putInt((Integer) value);
+            }
+        },
+        SHORT("Short", Short.BYTES, "i2", Short.class) {
+            void put(ByteBuffer buffer, Object value) {
+                buffer.putShort((Short) value);
+            }
+        },
+        LONG("Long", Long.BYTES, "i8", Long.class) {
+            void put(ByteBuffer buffer, Object value) {
+                buffer.putLong((Long) value);
+            }
+        },
+        FLOAT("Float", Float.BYTES, "f4", Float.class) {
+            void put(ByteBuffer buffer, Object value) {
+                buffer.putFloat((Float) value);
+            }
+        },
+        DOUBLE("Double", Double.BYTES, "f8", Double.class) {
+            void put(ByteBuffer buffer, Object value) {
+                buffer.putDouble((Double) value);
+            }
+        },
+        DATETIME("Datetime", Long.BYTES, "M8[ns]", Long.class) {
+            void put(ByteBuffer buffer, Object value) {
+                buffer.putLong((Long) value);
+            }
+        };
+
+        private final String tag;
+        private final int byteWidth;
+        private final String numpyType;
+        private final Class<?> valueClass;
+
+        FieldType(String tag, int byteWidth, String numpyType, Class<?> valueClass) {
+            this.tag = tag;
+            this.byteWidth = byteWidth;
+            this.numpyType = numpyType;
+            this.valueClass = valueClass;
+        }
+
+        abstract void put(ByteBuffer buffer, Object value);
+
+        private boolean accepts(Object value) {
+            return value != null && valueClass.isInstance(value);
+        }
+
+        private String numpyDescriptor() {
+            return NUMPY_BYTE_ORDER + numpyType;
+        }
+
+        private static FieldType fromTag(String tag) {
+            for (FieldType type : values()) {
+                if (type.tag.equals(tag)) {
+                    return type;
+                }
+            }
+            throw new IllegalArgumentException("Unrecognized item type: " + tag);
+        }
+    }
+
+    public static class SchemaMismatchException extends IllegalStateException {
+        private static final long serialVersionUID = 1L;
+
+        SchemaMismatchException(String message) {
+            super(message);
+        }
+    }
+
+    private final String outputFile;
+    private final Map<String, FieldType> fields;
+    private final Layout primitiveLayout;
+    private final ByteBuffer buffer;
+    private final File file;
+    private final RandomAccessFile randomAccessFile;
+    private int linesWritten;
+    private boolean closed;
+
+    public NpyWriter(String outputFile, Layout layout) {
+        this(outputFile, layout.schema());
+    }
+
+    public NpyWriter(String outputFile, Map<String, String> itemNamesAndTypes) {
+        if (itemNamesAndTypes == null || itemNamesAndTypes.isEmpty()) {
+            throw new IllegalArgumentException("The .npy schema must not be empty");
+        }
+
         this.outputFile = outputFile;
-		this.itemNamesAndTypes = Collections.unmodifiableMap(
-				new LinkedHashMap<String, String>(itemNamesAndTypes));
-		this.primitiveLayout = getPrimitiveLayout(this.itemNamesAndTypes);
-		this.buf = ByteBuffer.allocate(
-				BUFSIZE * getBytesPerLine(this.itemNamesAndTypes)).order(NATIVE_BYTE_ORDER);
+        this.fields = parseFields(itemNamesAndTypes);
+        this.primitiveLayout = getPrimitiveLayout(fields);
+        this.buffer = ByteBuffer.allocate(
+                ROWS_PER_BUFFER * getBytesPerLine(fields)).order(NATIVE_BYTE_ORDER);
+        this.file = new File(outputFile);
 
-		try {
-            file = new File(outputFile);
-			raf = new RandomAccessFile(file, "rw");
-			raf.setLength(0);
+        RandomAccessFile openedFile = null;
+        try {
+            openedFile = new RandomAccessFile(file, "rw");
+            openedFile.setLength(0);
+            reserveHeader(openedFile);
+        } catch (IOException error) {
+            if (openedFile != null) {
+                try {
+                    openedFile.close();
+                } catch (IOException closeError) {
+                    error.addSuppressed(closeError);
+                }
+            }
+            throw new UncheckedIOException(
+                    "The .npy file " + outputFile + " could not be created", error);
+        }
+        this.randomAccessFile = openedFile;
+    }
 
-			// Reserve space for the final header, which is written when the file closes.
-			int hdrLen = NPY_HEADER.length + 3; // Magic bytes, version bytes, and newline.
-			String filler = new String(new char[HEADER_SIZE + hdrLen]).replace("\0", " ") +"\n";
-			raf.writeBytes(filler);
+    public NpyWriter(String outputFile) {
+        this(outputFile, Layout.XYZ);
+    }
 
-		} catch (IOException e) {
-			throw new RuntimeException("The .npy file " + outputFile +" could not be created");
-		}
-	}
+    public void write(Map<String, Object> items) throws IOException {
+        ensureOpen();
+        validateItems(items);
+        for (Map.Entry<String, FieldType> field : fields.entrySet()) {
+            field.getValue().put(buffer, items.get(field.getKey()));
+        }
+        finishRow();
+    }
 
+    public void write(long time, float x, float y, float z) throws IOException {
+        ensureOpen();
+        requirePrimitiveLayout(Layout.XYZ);
+        buffer.putLong(time);
+        buffer.putFloat(x);
+        buffer.putFloat(y);
+        buffer.putFloat(z);
+        finishRow();
+    }
 
-	public NpyWriter(String outputFile) {
-		this(outputFile, getDefaultItemNamesAndTypes());
-	}
+    public void write(
+            long time,
+            float x, float y, float z, float temperature) throws IOException {
+        ensureOpen();
+        requirePrimitiveLayout(Layout.XYZT);
+        buffer.putLong(time);
+        buffer.putFloat(x);
+        buffer.putFloat(y);
+        buffer.putFloat(z);
+        buffer.putFloat(temperature);
+        finishRow();
+    }
 
+    public void write(
+            long time,
+            float x, float y, float z, float temperature,
+            float light) throws IOException {
+        ensureOpen();
+        requirePrimitiveLayout(Layout.XYZTL);
+        buffer.putLong(time);
+        buffer.putFloat(x);
+        buffer.putFloat(y);
+        buffer.putFloat(z);
+        buffer.putFloat(temperature);
+        buffer.putFloat(light);
+        finishRow();
+    }
 
-	public void write(Map<String, Object> items) throws IOException {
-		putItems(items);
-		finishRow();
-	}
+    public void write(
+            long time,
+            float x, float y, float z, float gyroX,
+            float gyroY, float gyroZ, float temperature, float light) throws IOException {
+        ensureOpen();
+        requirePrimitiveLayout(Layout.XYZ_GYRO_TL);
+        buffer.putLong(time);
+        buffer.putFloat(x);
+        buffer.putFloat(y);
+        buffer.putFloat(z);
+        buffer.putFloat(gyroX);
+        buffer.putFloat(gyroY);
+        buffer.putFloat(gyroZ);
+        buffer.putFloat(temperature);
+        buffer.putFloat(light);
+        finishRow();
+    }
 
+    private void finishRow() throws IOException {
+        linesWritten++;
+        if (!buffer.hasRemaining()) {
+            flushBuffer();
+        }
+    }
 
-	public void write(long time, float x, float y, float z) throws IOException {
-		requirePrimitiveLayout(PrimitiveLayout.XYZ);
-		buf.putLong(time);
-		buf.putFloat(x);
-		buf.putFloat(y);
-		buf.putFloat(z);
-		finishRow();
-	}
+    private void ensureOpen() {
+        if (closed) {
+            throw new IllegalStateException("Cannot write to a closed NpyWriter");
+        }
+    }
 
+    private void requirePrimitiveLayout(Layout expected) {
+        if (primitiveLayout != expected) {
+            throw new SchemaMismatchException(
+                    "Primitive row layout " + expected + " does not match schema");
+        }
+    }
 
-	public void write(
-			long time,
-			float x, float y, float z, float temperature) throws IOException {
-		requirePrimitiveLayout(PrimitiveLayout.XYZT);
-		buf.putLong(time);
-		buf.putFloat(x);
-		buf.putFloat(y);
-		buf.putFloat(z);
-		buf.putFloat(temperature);
-		finishRow();
-	}
+    private void validateItems(Map<String, Object> items) {
+        if (items == null) {
+            throw new IllegalArgumentException("Row items must not be null");
+        }
+        for (Map.Entry<String, FieldType> field : fields.entrySet()) {
+            Object value = items.get(field.getKey());
+            if (!items.containsKey(field.getKey())) {
+                throw new IllegalArgumentException(
+                        "Missing value for field: " + field.getKey());
+            }
+            if (!field.getValue().accepts(value)) {
+                throw new IllegalArgumentException(
+                        "Value for field " + field.getKey()
+                        + " must be " + field.getValue().valueClass.getSimpleName());
+            }
+        }
+    }
 
+    private static void reserveHeader(RandomAccessFile output) throws IOException {
+        int headerPrefixSize = NPY_HEADER.length + 2 + Short.BYTES;
+        output.write(new byte[headerPrefixSize + HEADER_SIZE]);
+    }
 
-	public void write(
-			long time,
-			float x, float y, float z, float temperature,
-			float light) throws IOException {
-		requirePrimitiveLayout(PrimitiveLayout.XYZTL);
-		buf.putLong(time);
-		buf.putFloat(x);
-		buf.putFloat(y);
-		buf.putFloat(z);
-		buf.putFloat(temperature);
-		buf.putFloat(light);
-		finishRow();
-	}
+    private void flushBuffer() throws IOException {
+        int bytesUsed = buffer.position();
+        if (bytesUsed > 0) {
+            randomAccessFile.write(buffer.array(), 0, bytesUsed);
+            buffer.clear();
+        }
+    }
 
+    private void writeHeader() throws IOException {
+        randomAccessFile.seek(0);
+        randomAccessFile.write(NPY_HEADER);
+        randomAccessFile.write(NPY_MAJ_VERSION);
+        randomAccessFile.write(NPY_MIN_VERSION);
 
-	public void write(
-			long time,
-			float x, float y, float z, float gyroX,
-			float gyroY, float gyroZ, float temperature, float light) throws IOException {
-		requirePrimitiveLayout(PrimitiveLayout.XYZ_GYRO_TL);
-		buf.putLong(time);
-		buf.putFloat(x);
-		buf.putFloat(y);
-		buf.putFloat(z);
-		buf.putFloat(gyroX);
-		buf.putFloat(gyroY);
-		buf.putFloat(gyroZ);
-		buf.putFloat(temperature);
-		buf.putFloat(light);
-		finishRow();
-	}
+        StringBuilder dataHeader = new StringBuilder("{ 'descr': [");
+        int fieldIndex = 0;
+        for (Map.Entry<String, FieldType> field : fields.entrySet()) {
+            if (fieldIndex > 0) {
+                dataHeader.append(',');
+            }
+            dataHeader.append("('")
+                    .append(field.getKey())
+                    .append("','")
+                    .append(field.getValue().numpyDescriptor())
+                    .append("')");
+            fieldIndex++;
+        }
+        dataHeader.append("]")
+                .append(", 'fortran_order': False")
+                .append(", 'shape': (")
+                .append(linesWritten)
+                .append(",), }");
 
+        int headerLength = dataHeader.length() + 1;
+        if (headerLength > HEADER_SIZE) {
+            throw new IOException("The .npy header is too large");
+        }
+        while (dataHeader.length() < HEADER_SIZE - 1) {
+            dataHeader.append(' ');
+        }
+        dataHeader.append('\n');
 
-	private void finishRow() throws IOException {
+        writeLittleEndianShort(randomAccessFile, (short) HEADER_SIZE);
+        randomAccessFile.writeBytes(dataHeader.toString());
+        randomAccessFile.seek(randomAccessFile.length());
+    }
 
-		if (!buf.hasRemaining()) {  // Flush a complete buffer before the next row.
-			raf.write(buf.array());
-			buf.clear();
-		}
-
-		linesWritten++;
-	}
-
-
-	private void requirePrimitiveLayout(PrimitiveLayout expected) {
-		if (primitiveLayout != expected) {
-			throw new SchemaMismatchException(
-					"Primitive row layout " + expected + " does not match schema");
-		}
-	}
-
-
-	private void putItems(Map<String, Object> items) {
-		for(Map.Entry<String, String> entry : itemNamesAndTypes.entrySet()) {
-			String name = entry.getKey();
-			String type = entry.getValue();
-			Object item = items.get(name);
-			putItem(item, type);
-		}
-	}
-
-
-	private void putItem(Object item, String type) {
-
-		switch(type) {
-
-			case "Integer":
-				buf.putInt((int) item);
-				break;
-
-			case "Short":
-				buf.putShort((short) item);
-				break;
-
-			case "Long":
-				buf.putLong((long) item);
-				break;
-
-			case "Float":
-				buf.putFloat((float) item);
-				break;
-
-			case "Double":
-				buf.putDouble((double) item);
-				break;
-
-			case "Datetime":
-				buf.putLong((long) item); // datetime64[ns] is represented as 64-bit integer
-				break;
-
-			default:
-				throw new IllegalArgumentException("Unrecognized item type: " + type);
-
-		}
-
-	}
-
-
-	/**
-	 * Writes the schema descriptor and current row count into the file header.
-	 */
-	private void writeHeader() {
-		try {
-
-			raf.seek(0);
-
-			raf.write(NPY_HEADER);
-			raf.write(NPY_MAJ_VERSION);
-			raf.write(NPY_MIN_VERSION);
-
-			// Describes the data to be written. Padded with space characters to be an even
-			// multiple of the block size. Terminated with a newline. Prefixed with a header length.
-			String dataHeader = "{ 'descr': [";
-
-			int i = 0;
-			for (Map.Entry<String, String> entry : itemNamesAndTypes.entrySet()) {
-				dataHeader += "('" + entry.getKey() + "','" + toNpyTypeStr(entry.getValue()) + "')";
-				if ((i+1) < itemNamesAndTypes.entrySet().size()) dataHeader += ",";
-				i++;
-			}
-
-			dataHeader	+= "]"
-						+ ", 'fortran_order': False"
-						+ ", 'shape': (" + linesWritten + ",), "
-						+ "}";
-
-			int hdrLen    = dataHeader.length() + 1; // Include the terminating newline.
-			if (hdrLen > HEADER_SIZE) {
-				throw new RuntimeException("header is too big to be written.");
-				// Increase HEADER_SIZE if this happens
-			}
-			String filler = new String(new char[HEADER_SIZE - hdrLen]).replace("\0", " ");
-
-			dataHeader = dataHeader + filler + '\n';
-
-			writeLEShort(raf, (short) HEADER_SIZE);
-
-			raf.writeBytes(dataHeader);
-			raf.seek(raf.length());
-
-		} catch (IOException e) {
-			e.printStackTrace();
-			throw new RuntimeException("The .npy file could not write a header created");
-		}
-	}
-
+    private void finalizeFile() throws IOException {
+        flushBuffer();
+        writeHeader();
+    }
 
     public void compress(String compressedOutputFile) {
-		finalFlush();
-
-        try(GZIPOutputStream zip = new GZIPOutputStream(new FileOutputStream(new File(compressedOutputFile)))) {
-            byte [] buff = new byte[1024];
-            int len;
-            raf.seek(0);
-            while((len=raf.read(buff)) != -1){
-                zip.write(buff, 0, len);
+        ensureOpen();
+        try {
+            File compressedFile = new File(compressedOutputFile);
+            if (file.getCanonicalFile().equals(compressedFile.getCanonicalFile())) {
+                throw new IllegalArgumentException(
+                        "Compressed output must differ from " + outputFile);
             }
-        } catch (IOException e) {
-            e.printStackTrace();
-		}
+
+            finalizeFile();
+            try (FileInputStream input = new FileInputStream(file);
+                 GZIPOutputStream output = new GZIPOutputStream(
+                         new FileOutputStream(compressedFile))) {
+                byte[] compressedBuffer = new byte[8192];
+                int length;
+                while ((length = input.read(compressedBuffer)) != -1) {
+                    output.write(compressedBuffer, 0, length);
+                }
+            }
+        } catch (IOException error) {
+            throw new UncheckedIOException("Could not compress " + outputFile, error);
+        }
     }
 
+    public void compress() {
+        compress(outputFile + ".gz");
+    }
 
-	public void compress() {
-		compress(outputFile+".gz");
-	}
-
-
-	private void finalFlush() {
-		try {
-			// Flush the partial buffer before rewriting the header.
-			raf.write(buf.array());
-			buf.clear();
-		} catch (IOException e) {
-			e.printStackTrace();
-        }
-		writeHeader();  // Rewrite the header with the final row count.
-	}
-
-
-	public void close() {
-		finalFlush();
-
-		try {
-            raf.close();
-		} catch (IOException e) {
-			e.printStackTrace();
+    @Override
+    public void close() {
+        if (closed) {
+            return;
         }
 
+        IOException failure = null;
+        try {
+            finalizeFile();
+        } catch (IOException error) {
+            failure = error;
+        }
+        try {
+            randomAccessFile.close();
+        } catch (IOException error) {
+            if (failure == null) {
+                failure = error;
+            } else {
+                failure.addSuppressed(error);
+            }
+        } finally {
+            closed = true;
+        }
+
+        if (failure != null) {
+            throw new UncheckedIOException("Could not finalize " + outputFile, failure);
+        }
     }
 
-
-	public void closeAndDelete() {
-		close();
-		file.delete();
-	}
-
-
-	/**
-	 * Writes a little-endian short to the given output stream
-	 * @param out the stream
-	 * @param value the value to encode
-	 * @throws IOException
-	 */
-	private static void writeLEShort(RandomAccessFile out, short value) throws IOException
-	{
-
-		// convert to little endian
-		value = (short) ((short) ((short) value << 8) & 0xFF00 | (value >> 8));
-
-		out.writeShort( value );
-
-	}
-
-
-	/**
-	 * Writes a little-endian int to the given output stream
-	 * @param out the stream
-	 * @param value the value to encode
-	 * @throws IOException
-	 */
-	private static void writeLEInt(RandomAccessFile out, int value) throws IOException
-	{
-		System.out.println("writing:" + value);
-		out.writeByte(value & 0x00FF);
-		out.writeByte((value >> 8) & 0x00FF);
-		out.writeByte((value >> 16) & 0x00FF);
-		out.writeByte((value >> 24) & 0x00FF);
-	}
-
-
-	private static Map<String, String> getDefaultItemNamesAndTypes() {
-		Map<String, String> itemNamesAndTypes = new LinkedHashMap<String, String>();
-		itemNamesAndTypes.put("time", "Datetime");
-		itemNamesAndTypes.put("x", "Float");
-		itemNamesAndTypes.put("y", "Float");
-		itemNamesAndTypes.put("z", "Float");
-		return itemNamesAndTypes;
-	}
-
-
-	private static int getBytesPerLine(Map<String, String> itemNamesAndTypes) {
-		int bytesPerLine = 0;
-		for(String type : itemNamesAndTypes.values()) {
-			bytesPerLine += getBytesPerType(type);
-		}
-		return bytesPerLine;
-	}
-
-
-	private static PrimitiveLayout getPrimitiveLayout(
-			Map<String, String> itemNamesAndTypes) {
-		if (matchesPrimitiveLayout(itemNamesAndTypes, XYZ_FIELDS)) {
-			return PrimitiveLayout.XYZ;
-		}
-		if (matchesPrimitiveLayout(itemNamesAndTypes, XYZT_FIELDS)) {
-			return PrimitiveLayout.XYZT;
-		}
-		if (matchesPrimitiveLayout(itemNamesAndTypes, XYZTL_FIELDS)) {
-			return PrimitiveLayout.XYZTL;
-		}
-		if (matchesPrimitiveLayout(itemNamesAndTypes, XYZ_GYRO_TL_FIELDS)) {
-			return PrimitiveLayout.XYZ_GYRO_TL;
-		}
-		return PrimitiveLayout.UNKNOWN;
-	}
-
-
-	private static boolean matchesPrimitiveLayout(
-			Map<String, String> itemNamesAndTypes, String[] fieldNames) {
-		if (itemNamesAndTypes.size() != fieldNames.length) {
-			return false;
-		}
-		int index = 0;
-		for (Map.Entry<String, String> entry : itemNamesAndTypes.entrySet()) {
-			String expectedType = index == 0 ? "Datetime" : "Float";
-			if (!fieldNames[index].equals(entry.getKey())
-					|| !expectedType.equals(entry.getValue())) {
-				return false;
-			}
-			index++;
-		}
-		return true;
-	}
-
-
-	private static int getBytesPerType(String type) {
-		switch(type) {
-
-			case "Integer":
-				return Integer.BYTES;
-
-			case "Short":
-				return Short.BYTES;
-
-			case "Long":
-				return Long.BYTES;
-
-			case "Float":
-				return Float.BYTES;
-
-			case "Double":
-				return Double.BYTES;
-
-			case "Datetime":
-				return Long.BYTES; // datetime64[ns] is represented as 64-bit integer
-
-			default:
-				throw new IllegalArgumentException("Unrecognized item type: " + type);
-
-		}
-	}
-
-
-	private static String toNpyTypeStr(String type) {
-
-		switch(type) {
-
-			case "Integer":
-				return NUMPY_BYTE_ORDER+"i4";
-
-			case "Short":
-				return NUMPY_BYTE_ORDER+"i2";
-
-			case "Long":
-				return NUMPY_BYTE_ORDER+"i8";
-
-			case "Float":
-				return NUMPY_BYTE_ORDER+"f4";
-
-			case "Double":
-				return NUMPY_BYTE_ORDER+"f8";
-
-			case "Datetime":
-				return NUMPY_BYTE_ORDER+"M8[ns]";
-
-			default:
-				throw new IllegalArgumentException("Unrecognized item type: " + type);
-
-		}
-
+    public void closeAndDelete() {
+        close();
+        if (file.exists() && !file.delete()) {
+            throw new IllegalStateException("Could not delete " + outputFile);
+        }
     }
 
+    private static Map<String, FieldType> parseFields(
+            Map<String, String> itemNamesAndTypes) {
+        Map<String, FieldType> parsed = new LinkedHashMap<String, FieldType>();
+        for (Map.Entry<String, String> field : itemNamesAndTypes.entrySet()) {
+            parsed.put(field.getKey(), FieldType.fromTag(field.getValue()));
+        }
+        return Collections.unmodifiableMap(parsed);
+    }
 
+    private static int getBytesPerLine(Map<String, FieldType> fields) {
+        int bytesPerLine = 0;
+        for (FieldType type : fields.values()) {
+            bytesPerLine += type.byteWidth;
+        }
+        return bytesPerLine;
+    }
+
+    private static Layout getPrimitiveLayout(Map<String, FieldType> fields) {
+        for (Layout layout : Layout.values()) {
+            if (matchesPrimitiveLayout(fields, layout.schema())) {
+                return layout;
+            }
+        }
+        return null;
+    }
+
+    private static boolean matchesPrimitiveLayout(
+            Map<String, FieldType> fields,
+            Map<String, String> expectedSchema) {
+        if (fields.size() != expectedSchema.size()) {
+            return false;
+        }
+
+        java.util.Iterator<Map.Entry<String, FieldType>> actual =
+                fields.entrySet().iterator();
+        java.util.Iterator<Map.Entry<String, String>> expected =
+                expectedSchema.entrySet().iterator();
+        while (actual.hasNext()) {
+            Map.Entry<String, FieldType> actualField = actual.next();
+            Map.Entry<String, String> expectedField = expected.next();
+            if (!actualField.getKey().equals(expectedField.getKey())
+                    || actualField.getValue() != FieldType.fromTag(expectedField.getValue())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static void writeLittleEndianShort(
+            RandomAccessFile output,
+            short value) throws IOException {
+        output.writeByte(value & 0xFF);
+        output.writeByte((value >>> 8) & 0xFF);
+    }
 }
