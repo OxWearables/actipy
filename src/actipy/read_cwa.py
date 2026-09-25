@@ -38,14 +38,15 @@ For full option list, run:
     $ read_cwa --help
 """
 
+import argparse
+import json
+import os
 import time
 from pathlib import Path
-import argparse
-import pandas as pd
+
 import numpy as np
-import os
-import json
-# from tqdm import tqdm
+import pandas as pd
+from tqdm.auto import tqdm
 
 from actipy import read_device
 
