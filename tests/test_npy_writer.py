@@ -1,11 +1,9 @@
-import re
 import shutil
 import subprocess
 from pathlib import Path
 
 import numpy as np
 import pytest
-
 
 PROJECT_ROOT = Path(__file__).parents[1]
 SOURCE_DIR = PROJECT_ROOT / "src" / "actipy"
@@ -93,6 +91,12 @@ def assert_output(output, field_names, rows):
         np.testing.assert_array_equal(data[field_name], expected)
 
 
+def assert_exact_file_size(output, float_columns, rows):
+    header_bytes = 6 + 2 + 2 + 256
+    row_bytes = 8 + 4 * float_columns
+    assert output.stat().st_size == header_bytes + row_bytes * rows
+
+
 @pytest.mark.parametrize("float_columns", [3, 4, 5, 8])
 @pytest.mark.parametrize("rows", [0, 1, 8191, 8192, 8193])
 def test_primitive_rows_across_buffer_boundary(
@@ -106,12 +110,21 @@ def test_primitive_rows_across_buffer_boundary(
         rows,
     )
     assert_output(output, FIELD_NAMES[float_columns], rows)
+    assert_exact_file_size(output, float_columns, rows)
 
 
 def test_map_api_remains_compatible(npy_writer_classes, tmp_path):
     output = tmp_path / "map.npy"
     run_harness(npy_writer_classes, output, "map", 4, 3)
     assert_output(output, ("f0", "f1", "f2", "f3"), rows=3)
+
+
+def test_failed_map_row_does_not_corrupt_following_rows(
+        npy_writer_classes, tmp_path):
+    output = tmp_path / "map-recover.npy"
+    run_harness(npy_writer_classes, output, "map-recover", 4, 3)
+    assert_output(output, ("f0", "f1", "f2", "f3"), rows=3)
+    assert_exact_file_size(output, 4, 3)
 
 
 @pytest.mark.parametrize("float_columns", [3, 4, 5, 8])
@@ -149,22 +162,51 @@ def test_schema_is_snapshotted_at_construction(
     assert_output(output, FIELD_NAMES[float_columns], rows=3)
 
 
-@pytest.mark.parametrize(
-    ("reader_name", "expected_handlers"),
-    [
-        ("ActigraphReader.java", 3),
-        ("AxivityReader.java", 2),
-        ("GENEActivReader.java", 2),
-    ],
-)
-def test_readers_propagate_schema_mismatches(reader_name, expected_handlers):
-    source = (SOURCE_DIR / reader_name).read_text()
-    handlers = re.findall(
-        r"catch \(NpyWriter\.SchemaMismatchException e\) \{\s+throw e;\s+\}",
-        source,
-    )
+def test_close_is_idempotent(npy_writer_classes, tmp_path):
+    output = tmp_path / "double-close.npy"
+    run_harness(npy_writer_classes, output, "double-close", 3, 2)
+    assert_output(output, FIELD_NAMES[3], rows=2)
+    assert_exact_file_size(output, 3, 2)
 
-    assert len(handlers) == expected_handlers
+
+def test_write_after_close_is_rejected(npy_writer_classes, tmp_path):
+    output = tmp_path / "write-after-close.npy"
+    result = run_harness(
+        npy_writer_classes,
+        output,
+        "write-after-close",
+        3,
+        rows=1,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "Cannot write to a closed NpyWriter" in result.stderr
+
+
+def test_close_failure_is_propagated(npy_writer_classes, tmp_path):
+    output = tmp_path / "close-failure.npy"
+    result = run_harness(
+        npy_writer_classes,
+        output,
+        "close-failure",
+        3,
+        rows=1,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "UncheckedIOException" in result.stderr
+    assert "Could not finalize" in result.stderr
+
+
+@pytest.mark.parametrize("mode", ["compress-failure", "compress-source"])
+def test_failed_compression_preserves_writer_state(
+        npy_writer_classes, tmp_path, mode):
+    output = tmp_path / f"{mode}.npy"
+
+    run_harness(npy_writer_classes, output, mode, 3, rows=2)
+
+    assert_output(output, FIELD_NAMES[3], rows=3)
+    assert_exact_file_size(output, 3, rows=3)
 
 
 @pytest.mark.parametrize(

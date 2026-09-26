@@ -1,400 +1,367 @@
-/**
- * Based on the OpenMovement implementation:
- * https://github.com/digitalinteraction/openmovement/blob/72c992b0ea524275d898e86181c5b38a9622c529/Software/AX3/cwa-convert/java/src/newcastle/cwa/CwaBlock.java
-*/
-import java.io.File;
+import java.io.EOFException;
 import java.io.FileInputStream;
-import java.io.FileWriter;
-import java.nio.ByteOrder;
+import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
+import java.time.DateTimeException;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.concurrent.TimeUnit;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.io.IOException;
 
 
 public class AxivityReader {
 
-    private static final int BLOCKSIZE = 512;
+    private static final int BLOCK_SIZE = 512;
+    private static final int SAMPLE_PAYLOAD_SIZE = 480;
 
-    // Keep field order aligned with NpyWriter's primitive row layouts.
-    private static final Map<String, String> ITEM_NAMES_AND_TYPES_AX3;
-    private static final Map<String, String> ITEM_NAMES_AND_TYPES_AX6;
-    static{
-        Map<String, String> itemNamesAndTypes = new LinkedHashMap<String, String>();
-        itemNamesAndTypes.put("time", "Datetime");
-        itemNamesAndTypes.put("x", "Float");
-        itemNamesAndTypes.put("y", "Float");
-        itemNamesAndTypes.put("z", "Float");
-        itemNamesAndTypes.put("temperature", "Float");
-        itemNamesAndTypes.put("light", "Float");
-        ITEM_NAMES_AND_TYPES_AX3 = Collections.unmodifiableMap(itemNamesAndTypes);
+    private enum Format {
+        AX3(NpyWriter.Layout.XYZTL),
+        AX6(NpyWriter.Layout.XYZ_GYRO_TL);
+
+        final NpyWriter.Layout outputLayout;
+
+        Format(NpyWriter.Layout outputLayout) {
+            this.outputLayout = outputLayout;
+        }
     }
-    static{
-        Map<String, String> itemNamesAndTypes = new LinkedHashMap<String, String>();
-        itemNamesAndTypes.put("time", "Datetime");
-        itemNamesAndTypes.put("x", "Float");
-        itemNamesAndTypes.put("y", "Float");
-        itemNamesAndTypes.put("z", "Float");
-        itemNamesAndTypes.put("gyro_x", "Float");
-        itemNamesAndTypes.put("gyro_y", "Float");
-        itemNamesAndTypes.put("gyro_z", "Float");
-        itemNamesAndTypes.put("temperature", "Float");
-        itemNamesAndTypes.put("light", "Float");
-        ITEM_NAMES_AND_TYPES_AX6 = Collections.unmodifiableMap(itemNamesAndTypes);
+
+    private static final class DataBlock {
+        final ByteBuffer bytes;
+        final Format format;
+        final int numAxes;
+        final int packing;
+        final int bytesPerSample;
+        final int sampleCount;
+        final boolean sampleCountClamped;
+        final float sampleRate;
+        final double startTime;
+        final float temperature;
+        final float light;
+        final int accelerationUnit;
+        final float gyroscopeUnit;
+
+        private DataBlock(
+                ByteBuffer bytes,
+                Format format,
+                int numAxes,
+                int packing,
+                int bytesPerSample,
+                int sampleCount,
+                boolean sampleCountClamped,
+                float sampleRate,
+                double startTime,
+                float temperature,
+                float light,
+                int accelerationUnit,
+                float gyroscopeUnit) {
+            this.bytes = bytes;
+            this.format = format;
+            this.numAxes = numAxes;
+            this.packing = packing;
+            this.bytesPerSample = bytesPerSample;
+            this.sampleCount = sampleCount;
+            this.sampleCountClamped = sampleCountClamped;
+            this.sampleRate = sampleRate;
+            this.startTime = startTime;
+            this.temperature = temperature;
+            this.light = light;
+            this.accelerationUnit = accelerationUnit;
+            this.gyroscopeUnit = gyroscopeUnit;
+        }
+
+        static DataBlock parse(byte[] raw) throws ReaderSupport.FormatException {
+            ByteBuffer block = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN);
+            byte marker0 = block.get(0);
+            byte marker1 = block.get(1);
+            if (marker0 == 'M' && marker1 == 'D') {
+                return null;
+            }
+            if (marker0 != 'A' || marker1 != 'X') {
+                return null;
+            }
+
+            int rateCode = block.get(24) & 0xFF;
+            if (rateCode != 0) {
+                int checksum = 0;
+                for (int index = 0; index < BLOCK_SIZE / 2; index++) {
+                    checksum = (short) (checksum + block.getShort(index * 2));
+                }
+                if (checksum != 0) {
+                    throw new ReaderSupport.FormatException("CWA block checksum mismatch");
+                }
+            }
+
+            int axesAndPacking = block.get(25) & 0xFF;
+            int numAxes = (axesAndPacking >>> 4) & 0x0F;
+            int packing = axesAndPacking & 0x0F;
+            Format format;
+            if (numAxes >= 6) {
+                format = Format.AX6;
+            } else if (numAxes >= 3) {
+                format = Format.AX3;
+            } else {
+                throw new ReaderSupport.FormatException(
+                        "CWA block has fewer than three axes");
+            }
+
+            int bytesPerSample;
+            if (packing == 2) {
+                bytesPerSample = 2 * numAxes;
+            } else if (packing == 0 && numAxes == 3) {
+                bytesPerSample = 4;
+            } else {
+                throw new ReaderSupport.FormatException(
+                        "Unsupported CWA packing and axis combination");
+            }
+
+            int declaredSampleCount = unsignedShort(block, 28);
+            int maxSamples = SAMPLE_PAYLOAD_SIZE / bytesPerSample;
+            int sampleCount = Math.min(declaredSampleCount, maxSamples);
+
+            float sampleRate;
+            float offsetStart;
+            if (rateCode == 0) {
+                sampleRate = block.getShort(26);
+                offsetStart = 0;
+            } else {
+                short timestampOffset = block.getShort(26);
+                sampleRate = 3200.0f / (1 << (15 - (rateCode & 15)));
+                offsetStart = -timestampOffset / sampleRate;
+            }
+            if (!Float.isFinite(sampleRate) || sampleRate <= 0) {
+                throw new ReaderSupport.FormatException(
+                        "CWA block has no positive finite sample rate");
+            }
+
+            int timeInfo = (int) unsignedInt(block, 14);
+            long blockTime;
+            try {
+                blockTime = cwaTimestamp(timeInfo);
+            } catch (DateTimeException error) {
+                throw new ReaderSupport.FormatException(
+                        "CWA block has an invalid timestamp", error);
+            }
+            blockTime += (long) Math.floor(offsetStart);
+            offsetStart -= (float) Math.floor(offsetStart);
+
+            int rawLight = unsignedShort(block, 18);
+            float light = (float) Math.pow(10, (rawLight & 0x3FF) / 341.0);
+            float temperature = (float) (((unsignedShort(block, 20) & 0x3FF)
+                    * 150.0 - 20500) / 1000);
+            int accelerationUnit = 1 << (8 + ((rawLight >>> 13) & 0x07));
+            int gyroscopeRange = 2000;
+            if (((rawLight >>> 10) & 0x07) != 0) {
+                gyroscopeRange = 8000 / (1 << ((rawLight >>> 10) & 0x07));
+            }
+            float gyroscopeUnit = 32768.0f / gyroscopeRange;
+
+            return new DataBlock(
+                    block,
+                    format,
+                    numAxes,
+                    packing,
+                    bytesPerSample,
+                    sampleCount,
+                    declaredSampleCount > maxSamples,
+                    sampleRate,
+                    (double) blockTime + offsetStart,
+                    temperature,
+                    light,
+                    accelerationUnit,
+                    gyroscopeUnit);
+        }
+    }
+
+    private static final class BlockDecoder {
+        private final NpyWriter writer;
+        private final Format expectedFormat;
+        private final ReaderSupport.Result result;
+        private double lastBlockTime;
+
+        BlockDecoder(
+                NpyWriter writer,
+                Format expectedFormat,
+                ReaderSupport.Result result) {
+            this.writer = writer;
+            this.expectedFormat = expectedFormat;
+            this.result = result;
+        }
+
+        int write(DataBlock block) throws IOException, ReaderSupport.FormatException {
+            if (block.format != expectedFormat) {
+                throw new ReaderSupport.FormatException(
+                        "CWA axis layout changes from "
+                        + expectedFormat + " to " + block.format);
+            }
+            if (block.sampleCountClamped) {
+                result.readErrors++;
+                System.err.println("Capping malformed CWA sample count at payload capacity");
+            }
+
+            double blockStartTime = block.startTime;
+            double blockEndTime = blockStartTime
+                    + (float) block.sampleCount / block.sampleRate;
+            if (lastBlockTime != 0 && blockStartTime - lastBlockTime < 1.0) {
+                blockStartTime = lastBlockTime;
+            }
+            lastBlockTime = blockEndTime;
+            result.sampleRate = block.sampleRate;
+
+            short[] values = new short[block.numAxes];
+            int accelerationAxis = block.format == Format.AX6 ? 3 : 0;
+            for (int sampleIndex = 0; sampleIndex < block.sampleCount; sampleIndex++) {
+                decodeSample(block, sampleIndex, values);
+                float ax = values[accelerationAxis] / (float) block.accelerationUnit;
+                float ay = values[accelerationAxis + 1] / (float) block.accelerationUnit;
+                float az = values[accelerationAxis + 2] / (float) block.accelerationUnit;
+                double time = blockStartTime
+                        + sampleIndex * (blockEndTime - blockStartTime)
+                        / block.sampleCount;
+                long timeNanos = TimeUnit.MILLISECONDS.toNanos((long) (time * 1000));
+
+                if (block.format == Format.AX6) {
+                    float gx = values[0] / block.gyroscopeUnit;
+                    float gy = values[1] / block.gyroscopeUnit;
+                    float gz = values[2] / block.gyroscopeUnit;
+                    writer.write(
+                            timeNanos,
+                            ax, ay, az,
+                            gx, gy, gz,
+                            block.temperature,
+                            block.light);
+                } else {
+                    writer.write(
+                            timeNanos,
+                            ax, ay, az,
+                            block.temperature,
+                            block.light);
+                }
+            }
+            return block.sampleCount;
+        }
+
+        private void decodeSample(DataBlock block, int sampleIndex, short[] values) {
+            if (block.packing == 0) {
+                long packed = unsignedInt(block.bytes, 30 + 4 * sampleIndex);
+                int exponent = (int) ((packed >>> 30) & 0x03);
+                values[0] = (short) ((short) (0xFFFFFFC0 & (packed << 6))
+                        >> (6 - exponent));
+                values[1] = (short) ((short) (0xFFFFFFC0 & (packed >> 4))
+                        >> (6 - exponent));
+                values[2] = (short) ((short) (0xFFFFFFC0 & (packed >> 14))
+                        >> (6 - exponent));
+            } else {
+                int sampleOffset = 30 + block.bytesPerSample * sampleIndex;
+                for (int axis = 0; axis < block.numAxes; axis++) {
+                    values[axis] = block.bytes.getShort(sampleOffset + 2 * axis);
+                }
+            }
+        }
     }
 
     public static void main(String[] args) {
+        ReaderSupport.run(args, AxivityReader::convert);
+    }
 
-        int statusOK = -1;
-        String accFile = null;
-        String outDir = null;
-        boolean verbose = false;
+    private static void convert(
+            ReaderSupport.Options options,
+            ReaderSupport.Result result) throws Exception {
+        try (FileInputStream input = new FileInputStream(options.inputFile);
+             FileChannel channel = input.getChannel()) {
+            long totalBlocks = channel.size() / BLOCK_SIZE;
+            long blocksRead = 0;
+            byte[] raw = new byte[BLOCK_SIZE];
+            DataBlock firstDataBlock = null;
 
-        // Parse args string. Example:
-        // $ java AxivityReader -i /path/to/inputFile.bin -o /path/to/outputDir -v
-        for (int i = 0; i < args.length; i++) {
-            if ("-i".equals(args[i]) && i < args.length - 1) {
-                accFile = args[++i];
-            } else if ("-o".equals(args[i]) && i < args.length - 1) {
-                outDir = args[++i];
-            } else if ("-v".equals(args[i])) {
-                verbose = true;
+            while (firstDataBlock == null && readBlockOrEof(channel, raw)) {
+                blocksRead++;
+                firstDataBlock = parseDataBlock(raw, result);
             }
-        }
+            if (firstDataBlock == null) {
+                throw new ReaderSupport.FormatException("No valid CWA data block found");
+            }
 
-        if (accFile == null) {
-            System.out.println("ERROR: No input file specified.");
-            System.exit(1);
-        }
-        if (outDir == null) {
-            System.out.println("ERROR: No output directory specified.");
-            System.exit(1);
-        }
+            try (NpyWriter writer = new NpyWriter(
+                    options.dataPath(), firstDataBlock.format.outputLayout)) {
+                BlockDecoder decoder = new BlockDecoder(
+                        writer, firstDataBlock.format, result);
+                int samplesWritten = decoder.write(firstDataBlock);
 
-        boolean hasGyro = detectGyro(accFile);
-        Map<String, String> item_names_and_types = hasGyro ? ITEM_NAMES_AND_TYPES_AX6 : ITEM_NAMES_AND_TYPES_AX3;
+                try {
+                    while (readBlockOrEof(channel, raw)) {
+                        blocksRead++;
+                        DataBlock block = parseDataBlock(raw, result);
+                        if (block != null) {
+                            samplesWritten += decoder.write(block);
+                        }
 
-        String outData = outDir + File.separator + "data.npy";
-        NpyWriter writer = new NpyWriter(outData, item_names_and_types);
-
-        BlockParser blockParser = new BlockParser(writer);
-
-        try(FileInputStream accStream = new FileInputStream(accFile);
-            FileChannel accChannel = accStream.getChannel();) {
-
-            int blockCount = 0;
-            long numBlocksTotal = accChannel.size() / BLOCKSIZE;
-            ByteBuffer block = ByteBuffer.allocate(BLOCKSIZE);
-
-            while (accChannel.read(block) != -1) {
-
-                blockParser.parse(block);
-                block.clear();
-
-                blockCount++;
-                if (verbose) {
-                    if ((blockCount % 10000 == 0) || (blockCount == numBlocksTotal)) {
-                        System.out.print("Reading file... " + (blockCount * 100 / numBlocksTotal) + "%\r");
+                        if (options.verbose
+                                && (blocksRead % 10000 == 0
+                                || blocksRead == totalBlocks)) {
+                            int percent = totalBlocks > 0
+                                    ? (int) (blocksRead * 100 / totalBlocks)
+                                    : 100;
+                            System.out.print("Reading file... " + percent + "%\r");
+                        }
                     }
+                } catch (EOFException error) {
+                    if (samplesWritten == 0) {
+                        throw error;
+                    }
+                    result.recordRecoverableError(
+                            "Stopping at truncated CWA data: " + error.getMessage());
                 }
-
-            }
-
-            statusOK = 1;
-
-        } catch (NpyWriter.SchemaMismatchException e) {
-            throw e;
-        } catch (Exception e) {
-            statusOK = 0;
-            e.printStackTrace();
-
-        } finally {
-            try {
-                writer.close();
-            } catch (Exception e) {
-                e.printStackTrace();
             }
         }
+    }
 
-        Map<String, String> info = new HashMap<String, String>();
-        info.put("ReadOK", String.valueOf(statusOK));
-        info.put("ReadErrors", String.valueOf(blockParser.getErrCounter()));
-        info.put("SampleRate", String.valueOf(blockParser.getSampleRate()));
+    private static boolean readBlockOrEof(FileChannel channel, byte[] target)
+            throws IOException {
+        ByteBuffer buffer = ByteBuffer.wrap(target);
+        while (buffer.hasRemaining()) {
+            int count = channel.read(buffer);
+            if (count == -1) {
+                if (buffer.position() == 0) {
+                    return false;
+                }
+                throw new EOFException("Unexpected partial CWA block");
+            }
+        }
+        return true;
+    }
 
-        // Persist reader status metadata alongside the converted data.
-        String outInfo = outDir + File.separator + "info.txt";
+    private static DataBlock parseDataBlock(
+            byte[] raw,
+            ReaderSupport.Result result) {
         try {
-            FileWriter file = new FileWriter(outInfo);
-            for (Map.Entry<String, String> entry : info.entrySet()) {
-                file.write(entry.getKey() + ":" + entry.getValue() + "\n");
-            }
-            file.flush();
-            file.close();
-        } catch (IOException e) {
-            e.printStackTrace();
+            return DataBlock.parse(raw);
+        } catch (ReaderSupport.FormatException error) {
+            result.readErrors++;
+            System.err.println("Skipping malformed CWA block: " + error.getMessage());
+            return null;
         }
-
-        return;
-
     }
 
-
-    // Check whether the input contains gyroscope axes.
-    private static boolean detectGyro(String accFile) {
-        boolean hasGyro = false;
-        try (FileInputStream accStream = new FileInputStream(accFile);
-             FileChannel accChannel = accStream.getChannel()) {
-
-            ByteBuffer block = ByteBuffer.allocate(BLOCKSIZE);
-            while (accChannel.read(block) != -1) {
-                block.flip();
-                block.order(ByteOrder.LITTLE_ENDIAN);
-                String header = "" + (char) block.get() + (char) block.get();
-                if (header.equals("AX")) {
-                    int numAxesBPS = block.get(25) & 0xff;
-                    hasGyro = ((numAxesBPS >> 4) & 0x0f) >= 6;
-                    break;
-                }
-                block.clear();
-            }
-        } catch (IOException e) {
-            System.err.println("ERROR: Failed to read the file header.");
-            e.printStackTrace();
-            System.exit(1);
-        }
-        return hasGyro;
+    private static LocalDateTime cwaLocalDateTime(int value) {
+        int year = ((value >>> 26) & 0x3F) + 2000;
+        int month = (value >>> 22) & 0x0F;
+        int day = (value >>> 17) & 0x1F;
+        int hour = (value >>> 12) & 0x1F;
+        int minute = (value >>> 6) & 0x3F;
+        int second = value & 0x3F;
+        return LocalDateTime.of(year, month, day, hour, minute, second);
     }
 
-
-    private static class BlockParser {
-
-        float sampleRate = -1;
-        int errCounter = 0;
-        double lastBlockTime = 0;
-        LocalDateTime sessionStart = null;
-        NpyWriter writer = null;
-
-        public BlockParser(NpyWriter writer) {
-            this.writer = writer;
-        }
-
-        public float getSampleRate() {
-            return sampleRate;
-        }
-
-        public int getErrCounter() {
-            return errCounter;
-        }
-
-        public void parse(ByteBuffer block) {
-            block.flip();
-            block.order(ByteOrder.LITTLE_ENDIAN);
-            String header = (char) block.get() + "";
-            header += (char) block.get() + "";
-
-            try {
-                if (header.equals("MD")) {
-                    /**
-                     * TODO: This sometimes raises
-                     * java.time.DateTimeException: Invalid value for MonthOfYear (valid values 1 - 12): 0
-                     */
-                    // sessionStart = getCwaHeaderLoggingStartTime(block);
-
-                    return;
-
-                } else if (header.equals("AX")) {
-                    int blockTimeInfo = Math.toIntExact(getUnsignedInt(block, 14));
-                    float light = (float) Math.pow(10, (getUnsignedShort(block, 18) & 0x3ff) / 341.0);
-                    float temperature = (float) (((getUnsignedShort(block, 20) & 0x3ff) * 150.0 - 20500) / 1000);
-                    short rateCode = (short) (block.get(24) & 0xff);
-                    short numAxesBPS = (short) (block.get(25) & 0xff);
-                    int sampleCount = getUnsignedShort(block, 28);
-                    long blockTime = getCwaTimestamp(blockTimeInfo);  // Unix seconds.
-                    double blockStartTime, blockEndTime;
-                    short timestampOffset = 0;
-                    float offsetStart = 0;
-                    float freq = 0;
-                    short checkSum = 0;
-                    int numAxes = 0;
-		            int accelAxis = -1;
-                    int gyroAxis = -1;
-					int accelUnit = 256;	// default 1g = 256
-					int gyroRange = 2000;	// default 32768 = 2000dps
-                    int rawLight = getUnsignedShort(block, 18);
-
-                    accelUnit = 1 << (8 + ((rawLight >>> 13) & 0x07));
-					if (((rawLight >> 10) & 0x07) != 0) {
-						gyroRange = 8000 / (1 << ((rawLight >>> 10) & 0x07));
-					}
-                    float gyroUnit = (gyroRange != 0) ? (32768.0f / gyroRange) : 0;
-
-                    // Decode the sample rate from the block format.
-                    if (rateCode == 0) {
-                        // In the old format, position 26 stores the frequency.
-                        freq = (float) block.getShort(26);
-                        // Reject blocks with no usable sample rate.
-                        if (freq == 0) { throw new Exception("Found zero sample rate is zero. Skipping data block..."); }
-                        offsetStart = 0;
-                    } else {
-                        // The new format stores a timestamp offset at position 26.
-                        timestampOffset = block.getShort(26);
-                        freq = 3200.0f / (1 << (15 - (rateCode & 15)));
-                        if (freq <= 0) { freq = 1.0f; }
-                        offsetStart = (float) -timestampOffset / freq;
-                        // Validate the block checksum before decoding samples.
-                        for (int i = 0; i < BLOCKSIZE / 2; i++) { checkSum += block.getShort(i * 2); }
-                        if (checkSum != 0) { throw new Exception("Found checksum error. Skipping data block..."); }
-                    }
-                    sampleRate = freq;
-
-                    // Normalize negative offsets at second boundaries so offsetStart
-                    // remains non-negative.
-                    blockTime += (long) Math.floor(offsetStart);
-                    offsetStart -= (float) Math.floor(offsetStart);
-                    // Compute the block's start and end timestamps.
-                    blockStartTime = (double) blockTime + offsetStart;
-                    blockEndTime = blockStartTime + (float) sampleCount / freq;
-                    // Keep adjacent packet boundaries stable; any rounding error is
-                    // left for the final packet because distributing it needs buffering.
-                    if ((lastBlockTime != 0) && ((blockStartTime - lastBlockTime) < 1.0)) {
-                        blockStartTime = lastBlockTime;
-                    }
-                    lastBlockTime = blockEndTime;
-
-                    // Determine the packed sample width from the axis/format flags.
-					int bytesPerSample = 0;
-					numAxes = (numAxesBPS >> 4) & 0x0f;
-
-					if ((numAxesBPS & 0x0f) == 2) {
-                        bytesPerSample = 2 * numAxes;       // 3*16-bit
-                    } else if ((numAxesBPS & 0x0f) == 0) {
-                        bytesPerSample = 4;                 // 3*10-bit + 2
-                    }
-					short expectedCount = (short)((bytesPerSample != 0) ? 480 / bytesPerSample : 0);
-
-                    int NUM_AXES_PER_SAMPLE = 3;
-                    if ((numAxesBPS & 0x0f) == 2) {
-                        bytesPerSample = 6; // 3*16-bit
-                    } else if ((numAxesBPS & 0x0f) == 0) {
-                        bytesPerSample = 4; // 3*10-bit + 2
-                    }
-
-                    numAxes = (numAxesBPS >> 4) & 0x0f;
-					if (numAxes >= 6) {
-						gyroAxis = 0;
-						accelAxis = 3;
-					} else if (numAxes >= 3) {
-						accelAxis = 0;
-					}
-
-                    // Cap malformed counts at the payload capacity.
-                    int maxSamples = 480 / bytesPerSample; // 80 or 120 samples/block.
-                    if (sampleCount > maxSamples) { sampleCount = maxSamples; }
-
-                    if (sessionStart == null) { sessionStart = getCwaLocalDateTime(blockTimeInfo); }
-                    double t = 0;
-					short[] sampleValues = new short[sampleCount * numAxes];
-
-                    for (int i = 0; i < sampleCount; i++) {
-					    if (bytesPerSample == 4) {
-                            long value = getUnsignedInt(block, 30 + 4 * i);
-					    	sampleValues[i * numAxes + 0] = (short)((short)(0xffffffc0 & (value <<  6)) >> (6 - ((value >> 30) & 0x03)));	// Sign-extend 10-bit value, adjust for exponent
-					    	sampleValues[i * numAxes + 1] = (short)((short)(0xffffffc0 & (value >>  4)) >> (6 - ((value >> 30) & 0x03)));	// Sign-extend 10-bit value, adjust for exponent
-					    	sampleValues[i * numAxes + 2] = (short)((short)(0xffffffc0 & (value >> 14)) >> (6 - ((value >> 30) & 0x03)));	// Sign-extend 10-bit value, adjust for exponent
-					    } else if (bytesPerSample >= 0) {
-					    	for (int j = 0; j < numAxes; j++) {
-					    		sampleValues[i * numAxes + j] = block.getShort(30 + (2 * numAxes * i) + (2 * j));
-					    	}
-					    } else {
-					    	for (int j = 0; j < numAxes; j++) {
-					    		sampleValues[i * numAxes + j] = 0;
-                            }
-                        }
-
-                        t = blockStartTime + (double)i * (blockEndTime - blockStartTime) / sampleCount;
-                        t *= 1000;  // Convert seconds to milliseconds for NpyWriter.
-
-                        float ax = 0, ay = 0, az = 0;
-			            if (accelAxis >= 0) {
-			            	ax = (float)sampleValues[numAxes * i + accelAxis + 0] / accelUnit;
-			            	ay = (float)sampleValues[numAxes * i + accelAxis + 1] / accelUnit;
-			            	az = (float)sampleValues[numAxes * i + accelAxis + 2] / accelUnit;
-			            }
-
-			            float gx = 0, gy = 0, gz = 0;
-			            if (gyroAxis >= 0) {
-			            	gx = (float)sampleValues[numAxes * i + gyroAxis + 0] / gyroUnit;
-			            	gy = (float)sampleValues[numAxes * i + gyroAxis + 1] / gyroUnit;
-			            	gz = (float)sampleValues[numAxes * i + gyroAxis + 2] / gyroUnit;
-			            }
-
-                        if (gyroAxis >= 0) {
-                            writer.write(
-                                    TimeUnit.MILLISECONDS.toNanos((long) t),
-                                    ax, ay, az, gx, gy, gz, temperature, light);
-                        } else {
-                            writer.write(
-                                    TimeUnit.MILLISECONDS.toNanos((long) t),
-                                    ax, ay, az, temperature, light);
-                        }
-
-                    }
-
-                    return;
-
-                }
-
-            } catch (NpyWriter.SchemaMismatchException e) {
-                throw e;
-            } catch (Exception e) {
-                errCounter++;
-                e.printStackTrace();
-            }
-
-        }
-
+    private static long cwaTimestamp(int value) {
+        return cwaLocalDateTime(value).toEpochSecond(ZoneOffset.UTC);
     }
 
-
-    private static LocalDateTime getCwaLocalDateTime(int cwaTimeInfo) {
-        int year = (int) ((cwaTimeInfo >> 26) & 0x3f) + 2000;
-        int month = (int) ((cwaTimeInfo >> 22) & 0x0f);
-        int day = (int) ((cwaTimeInfo >> 17) & 0x1f);
-        int hours = (int) ((cwaTimeInfo >> 12) & 0x1f);
-        int mins = (int) ((cwaTimeInfo >> 6) & 0x3f);
-        int secs = (int) ((cwaTimeInfo) & 0x3f);
-        LocalDateTime ldt = LocalDateTime.of(year, month, day, hours, mins, secs);
-        return ldt;
+    private static long unsignedInt(ByteBuffer buffer, int position) {
+        return buffer.getInt(position) & 0xFFFFFFFFL;
     }
 
-
-    private static long getCwaTimestamp(int cwaTimeInfo) {
-        LocalDateTime ldt = getCwaLocalDateTime(cwaTimeInfo);
-        long timestamp = ldt.toEpochSecond(ZoneOffset.UTC);
-        return timestamp;
-    }
-
-
-    private static LocalDateTime getCwaHeaderLoggingStartTime(ByteBuffer block) {
-        int delayedLoggingStartTime = (int) getUnsignedInt(block, 13);
-        return getCwaLocalDateTime(delayedLoggingStartTime);
-    }
-
-
-    // http://stackoverflow.com/questions/9883472/is-it-possiable-to-have-an-unsigned-bytebuffer-in-java
-    private static long getUnsignedInt(ByteBuffer bb, int position) {
-        return ((long) bb.getInt(position) & 0xffffffffL);
-    }
-
-
-    // http://stackoverflow.com/questions/9883472/is-it-possiable-to-have-an-unsigned-bytebuffer-in-java
-    private static int getUnsignedShort(ByteBuffer bb, int position) {
-        return (bb.getShort(position) & 0xffff);
+    private static int unsignedShort(ByteBuffer buffer, int position) {
+        return buffer.getShort(position) & 0xFFFF;
     }
 }

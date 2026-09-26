@@ -1,3 +1,7 @@
+import java.io.File;
+import java.io.RandomAccessFile;
+import java.io.UncheckedIOException;
+import java.lang.reflect.Field;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -24,9 +28,21 @@ public class NpyWriterHarness {
             schema.put("mutated", "Double");
         }
 
+        if ("map-recover".equals(mode)) {
+            Map<String, Object> invalid = new LinkedHashMap<String, Object>();
+            invalid.put("time", BASE_TIME - 1);
+            invalid.put("f0", 1.0f);
+            try {
+                writer.write(invalid);
+                throw new AssertionError("Invalid map row was accepted");
+            } catch (IllegalArgumentException expected) {
+                // A rejected row must not advance the writer's position.
+            }
+        }
+
         for (int row = 0; row < rows; row++) {
             long time = BASE_TIME + row;
-            if ("map".equals(mode)) {
+            if ("map".equals(mode) || "map-recover".equals(mode)) {
                 float[] values = valuesFor(row, floatColumns);
                 writeMapRow(writer, schema, time, values);
             } else if ("wrong-arity".equals(mode)) {
@@ -36,14 +52,48 @@ public class NpyWriterHarness {
                 writePrimitiveRow(writer, time, valuesFor(row, floatColumns));
             }
         }
+        if ("compress-failure".equals(mode)) {
+            try {
+                writer.compress(new File(output).getParent());
+                throw new AssertionError("Compression to a directory succeeded");
+            } catch (UncheckedIOException expected) {
+                writePrimitiveRow(
+                        writer,
+                        BASE_TIME + rows,
+                        valuesFor(rows, floatColumns));
+            }
+        } else if ("compress-source".equals(mode)) {
+            try {
+                writer.compress(output);
+                throw new AssertionError("Compression over source succeeded");
+            } catch (IllegalArgumentException expected) {
+                writePrimitiveRow(
+                        writer,
+                        BASE_TIME + rows,
+                        valuesFor(rows, floatColumns));
+            }
+        }
+        if ("close-failure".equals(mode)) {
+            Field fileField = NpyWriter.class.getDeclaredField("randomAccessFile");
+            fileField.setAccessible(true);
+            ((RandomAccessFile) fileField.get(writer)).close();
+            writer.close();
+            return;
+        }
+
         writer.close();
+        if ("double-close".equals(mode)) {
+            writer.close();
+        } else if ("write-after-close".equals(mode)) {
+            writePrimitiveRow(writer, BASE_TIME + rows, valuesFor(0, floatColumns));
+        }
     }
 
     private static Map<String, String> schemaFor(String mode, int floatColumns) {
         Map<String, String> schema = new LinkedHashMap<String, String>();
         schema.put("time", "wrong-leading-type".equals(mode) ? "Long" : "Datetime");
 
-        if ("map".equals(mode)) {
+        if ("map".equals(mode) || "map-recover".equals(mode)) {
             for (int column = 0; column < floatColumns; column++) {
                 schema.put("f" + column, "Float");
             }

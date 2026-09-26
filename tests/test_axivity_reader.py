@@ -6,7 +6,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-
 PROJECT_ROOT = Path(__file__).parents[1]
 SOURCE_DIR = PROJECT_ROOT / "src" / "actipy"
 
@@ -30,12 +29,13 @@ def axivity_reader(tmp_path_factory):
             "-d",
             str(classes),
             str(SOURCE_DIR / "NpyWriter.java"),
+            str(SOURCE_DIR / "ReaderSupport.java"),
             str(SOURCE_DIR / "AxivityReader.java"),
         ],
         check=True,
     )
 
-    def run(input_file, output_dir):
+    def run(input_file, output_dir, check=True):
         output_dir.mkdir()
         return subprocess.run(
             [
@@ -48,7 +48,7 @@ def axivity_reader(tmp_path_factory):
                 "-o",
                 str(output_dir),
             ],
-            check=True,
+            check=check,
             capture_output=True,
             text=True,
         )
@@ -160,7 +160,11 @@ def test_axivity_reader_detects_ax6_gyroscope_layout(
     raw_light = (2 << 10) | 341
     input_file.write_bytes(
         _axivity_block(
-            [(16384, -8192, 0, 256, -256, 128)],
+            [
+                (16384, -8192, 0, 256, -256, 128),
+                (8192, 0, -4096, 512, 0, -512),
+                (0, 4096, -8192, -256, 128, 256),
+            ],
             raw_light=raw_light,
         )
     )
@@ -174,11 +178,11 @@ def test_axivity_reader_detects_ax6_gyroscope_layout(
     )
     np.testing.assert_array_equal(
         np.column_stack((data["x"], data["y"], data["z"])),
-        [[1.0, -1.0, 0.5]],
+        [[1.0, -1.0, 0.5], [2.0, 0.0, -2.0], [-1.0, 0.5, 1.0]],
     )
     np.testing.assert_allclose(
         np.column_stack((data["gyro_x"], data["gyro_y"], data["gyro_z"])),
-        [[1000.0, -500.0, 0.0]],
+        [[1000.0, -500.0, 0.0], [500.0, 0.0, -250.0], [0.0, 250.0, -500.0]],
     )
 
 
@@ -276,3 +280,73 @@ def test_axivity_reader_skips_block_with_zero_sample_rate(
         "ReadErrors": "1",
         "SampleRate": "4.0",
     }
+
+
+def test_axivity_reader_ignores_corrupt_first_block_when_selecting_schema(
+        axivity_reader, tmp_path):
+    input_file = tmp_path / "corrupt-layout.cwa"
+    output_dir = tmp_path / "output"
+    corrupt = bytearray(
+        _axivity_block([(1, 2, 3)], rate_code=10)
+    )
+    corrupt[25] = (6 << 4) | 2
+    valid = _axivity_block(
+        [(256, 512, 768)],
+        rate_code=10,
+        timestamp=(2024, 1, 2, 3, 4, 6),
+    )
+    input_file.write_bytes(bytes(corrupt) + valid)
+
+    axivity_reader(input_file, output_dir)
+
+    data = np.load(output_dir / "data.npy")
+    assert data.dtype.names == (
+        "time", "x", "y", "z", "temperature", "light"
+    )
+    np.testing.assert_array_equal(data["x"], [1.0])
+    assert _read_info(output_dir)["ReadErrors"] == "1"
+
+
+def test_axivity_reader_keeps_samples_before_partial_trailing_block(
+        axivity_reader, tmp_path):
+    input_file = tmp_path / "partial.cwa"
+    output_dir = tmp_path / "output"
+    input_file.write_bytes(_axivity_block([(256, 0, 0)]) + b"AX")
+
+    result = axivity_reader(input_file, output_dir)
+
+    assert result.returncode == 0
+    assert "Unexpected partial CWA block" in result.stderr
+    np.testing.assert_array_equal(
+        np.load(output_dir / "data.npy")["x"],
+        [1.0],
+    )
+    assert _read_info(output_dir) == {
+        "ReadOK": "1",
+        "ReadErrors": "1",
+        "SampleRate": "4.0",
+    }
+
+
+def test_axivity_reader_rejects_layout_changes(
+        axivity_reader, tmp_path):
+    input_file = tmp_path / "mixed-layout.cwa"
+    output_dir = tmp_path / "output"
+    input_file.write_bytes(
+        _axivity_block([(256, 0, 0)], rate_code=10)
+        + _axivity_block(
+            [(0, 0, 0, 256, 0, 0)],
+            rate_code=10,
+            timestamp=(2024, 1, 2, 3, 4, 6),
+        )
+    )
+
+    result = axivity_reader(input_file, output_dir, check=False)
+
+    assert result.returncode != 0
+    assert "CWA axis layout changes from AX3 to AX6" in result.stderr
+    np.testing.assert_array_equal(
+        np.load(output_dir / "data.npy")["x"],
+        [1.0],
+    )
+    assert _read_info(output_dir)["ReadOK"] == "0"

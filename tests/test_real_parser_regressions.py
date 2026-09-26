@@ -10,7 +10,6 @@ import pytest
 import actipy
 from actipy import reader
 
-
 PROJECT_ROOT = Path(__file__).parents[1]
 SOURCE_DIR = PROJECT_ROOT / "src" / "actipy"
 FIXTURE_DIR = PROJECT_ROOT / "tests" / "data" / "parser-fixtures"
@@ -50,6 +49,7 @@ def compiled_java_readers(tmp_path_factory):
             "-d",
             str(classes),
             str(SOURCE_DIR / "NpyWriter.java"),
+            str(SOURCE_DIR / "ReaderSupport.java"),
             str(SOURCE_DIR / "ActigraphReader.java"),
             str(SOURCE_DIR / "AxivityReader.java"),
             str(SOURCE_DIR / "GENEActivReader.java"),
@@ -93,8 +93,8 @@ def test_real_device_numerical_regression(
 
     assert _sha256(fixture_path) == fixture_spec["fixture_sha256"]
     assert _sha256(expected_path) == fixture_spec["expected_sha256"]
-    # java_read_device derives its classpath from reader.__file__. Point it at
-    # the freshly compiled sources so this test cannot exercise stale classes.
+    # java_read_device derives its classpath from reader.__file__; point it at
+    # these test-built classes to avoid using stale packaged bytecode.
     monkeypatch.setattr(
         reader, "__file__", str(compiled_java_readers / "reader.py")
     )
@@ -126,3 +126,30 @@ def test_real_device_numerical_regression(
     assert info["ReadOK"] == fixture_spec["read_ok"]
     assert info["ReadErrors"] == fixture_spec["read_errors"]
     assert info["SampleRate"] == fixture_spec["sample_rate"]
+
+
+def test_java_read_device_returns_data_before_truncated_axivity_tail(
+        compiled_java_readers, monkeypatch, tmp_path):
+    source = FIXTURE_DIR / "axivity-ax3.cwa"
+    input_file = tmp_path / "truncated-tail.cwa"
+    source_bytes = source.read_bytes()
+    data_block = next(
+        source_bytes[offset:offset + 512]
+        for offset in range(0, len(source_bytes), 512)
+        if source_bytes[offset:offset + 2] == b"AX"
+    )
+    input_file.write_bytes(data_block + b"AX")
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    monkeypatch.setattr(
+        reader, "__file__", str(compiled_java_readers / "reader.py")
+    )
+
+    info = reader.java_read_device(
+        str(input_file), str(output_dir), verbose=False
+    )
+
+    data = np.load(output_dir / "data.npy")
+    assert len(data) > 0
+    assert info["ReadOK"] == 1
+    assert info["ReadErrors"] == 1

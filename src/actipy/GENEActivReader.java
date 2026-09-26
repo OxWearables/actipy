@@ -1,272 +1,311 @@
-
 import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileReader;
-import java.io.FileWriter;
+import java.io.EOFException;
+import java.io.FileInputStream;
 import java.io.IOException;
-import java.time.format.DateTimeFormatter;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.concurrent.TimeUnit;
-
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.util.concurrent.TimeUnit;
 
 
 public class GENEActivReader {
 
-    // Keep field order aligned with NpyWriter's primitive row layouts.
-    private static final Map<String, String> ITEM_NAMES_AND_TYPES;
-    static{
-        Map<String, String> itemNamesAndTypes = new LinkedHashMap<String, String>();
-        itemNamesAndTypes.put("time", "Datetime");
-        itemNamesAndTypes.put("x", "Float");
-        itemNamesAndTypes.put("y", "Float");
-        itemNamesAndTypes.put("z", "Float");
-        itemNamesAndTypes.put("temperature", "Float");
-        ITEM_NAMES_AND_TYPES = Collections.unmodifiableMap(itemNamesAndTypes);
+    private static final int FILE_HEADER_LINES = 59;
+    private static final int LINES_TO_CALIBRATION = 47;
+    private static final int PAGE_LINES = 10;
+    private static final int SAMPLES_PER_PAGE = 300;
+    private static final int HEX_CHARACTERS_PER_SAMPLE = 12;
+    private static final int PAGE_PAYLOAD_LENGTH =
+            SAMPLES_PER_PAGE * HEX_CHARACTERS_PER_SAMPLE;
+    private static final DateTimeFormatter PAGE_TIME_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss:SSS");
+
+    private static final class Calibration {
+        final double[] gains = new double[3];
+        final int[] offsets = new int[3];
+        int expectedPages;
+    }
+
+    private static final class PageHeader {
+        final long startTimeMillis;
+        final double temperature;
+        final double sampleRate;
+        final String payload;
+
+        PageHeader(
+                long startTimeMillis,
+                double temperature,
+                double sampleRate,
+                String payload) {
+            this.startTimeMillis = startTimeMillis;
+            this.temperature = temperature;
+            this.sampleRate = sampleRate;
+            this.payload = payload;
+        }
     }
 
     public static void main(String[] args) {
+        ReaderSupport.run(args, GENEActivReader::convert);
+    }
 
-        String accFile = null;
-        String outDir = null;
-        boolean verbose = false;
+    private static void convert(
+            ReaderSupport.Options options,
+            ReaderSupport.Result result) throws Exception {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                     new FileInputStream(options.inputFile), StandardCharsets.US_ASCII))) {
+            Calibration calibration = readCalibration(reader);
+            validateCalibration(calibration);
 
-        // Parse args string. Example:
-        // $ java GENEActivReader -i /path/to/inputFile.bin -o /path/to/outputDir -v
-        for (int i = 0; i < args.length; i++) {
-            if ("-i".equals(args[i]) && i < args.length - 1) {
-                accFile = args[++i];
-            } else if ("-o".equals(args[i]) && i < args.length - 1) {
-                outDir = args[++i];
-            } else if ("-v".equals(args[i])) {
-                verbose = true;
-            }
-        }
-
-        if (accFile == null) {
-            System.out.println("ERROR: No input file specified.");
-            System.exit(1);
-        }
-        if (outDir == null) {
-            System.out.println("ERROR: No output directory specified.");
-            System.exit(1);
-        }
-
-        int fileHeaderSize = 59;
-        int linesToAxesCalibration = 47;
-        int blockHeaderSize = 9;
-        int statusOK = -1;
-        double sampleRate = -1;
-        int errCounter = 0;
-
-        String outData = outDir + File.separator + "data.npy";
-        NpyWriter writer = new NpyWriter(outData, ITEM_NAMES_AND_TYPES);
-
-        try {
-            BufferedReader rawAccReader = new BufferedReader(new FileReader(accFile));
-            // Read the header to determine manufacturer gain and offset values.
-            double[] mfrGain = new double[3];
-            int[] mfrOffset = new int[3];
-            int numBlocksTotal = parseBinFileHeader(rawAccReader, fileHeaderSize, linesToAxesCalibration, mfrGain, mfrOffset);
-
-            int blockCount = 0;
-            String header;
-            long blockTime = 0;  // Unix millis
-            double temperature = 0.0;
-            double freq = 0.0;
-            String data;
-            String timeFmtStr = "yyyy-MM-dd HH:mm:ss:SSS";
-            DateTimeFormatter timeFmt = DateTimeFormatter.ofPattern(timeFmtStr);
-
-            while ((readLine(rawAccReader)) != null) {
-                // Header lines: record marker, serial/sequence, timestamp, unused
-                // metadata, temperature, battery/status, frequency, then payload.
-                for (int i = 1; i < blockHeaderSize; i++) {
+            try (NpyWriter writer = new NpyWriter(
+                    options.dataPath(), NpyWriter.Layout.XYZT)) {
+                int pageCount = 0;
+                int validPageCount = 0;
+                int samplesWritten = 0;
+                boolean truncatedPage = false;
+                while (true) {
+                    String[] pageLines;
                     try {
-                        header = readLine(rawAccReader);
-                        if (i == 3) {
-                            blockTime = LocalDateTime
-                                        .parse(header.split("Time:")[1], timeFmt)
-                                        .toInstant(ZoneOffset.UTC)
-                                        .toEpochMilli();
-                        } else if (i == 5) {
-                            temperature = Double.parseDouble(header.split(":")[1]);
-                        } else if (i == 8) {
-                            freq = Double.parseDouble(header.split(":")[1]);
+                        pageLines = readPage(reader);
+                    } catch (EOFException error) {
+                        if (samplesWritten == 0) {
+                            throw error;
                         }
-                    } catch (Exception e) {
-                        errCounter++;
-                        e.printStackTrace();
+                        result.recordRecoverableError(
+                                "Stopping at truncated GENEActiv data: "
+                                + error.getMessage());
+                        truncatedPage = true;
+                        break;
+                    }
+                    if (pageLines == null) {
+                        break;
+                    }
+                    pageCount++;
+                    PageHeader page;
+                    try {
+                        page = parsePageHeader(pageLines);
+                    } catch (ReaderSupport.FormatException error) {
+                        result.readErrors++;
+                        System.err.println("Skipping malformed GENEActiv page "
+                                + pageCount + ": " + error.getMessage());
                         continue;
                     }
-                }
-                sampleRate = freq;
 
-                data = readLine(rawAccReader);
-
-                int hexPosition = 0;
-                int xRaw = 0;
-                int yRaw = 0;
-                int zRaw = 0;
-                double x = 0.0;
-                double y = 0.0;
-                double z = 0.0;
-                double t = 0.0;
-
-                int i = 0;
-                while (hexPosition < data.length()) {
-
-                    try {
-
-                        xRaw = getSignedIntFromHex(data, hexPosition, 3);
-                        yRaw = getSignedIntFromHex(data, hexPosition + 3, 3);
-                        zRaw = getSignedIntFromHex(data, hexPosition + 6, 3);
-                        // todo *** read in light[36:46] (10 bits to signed int) and
-                        // button[47] (bool) values...
-
-                        // Apply the gain and offset values from the GENEActiv header.
-                        x = (xRaw * 100.0d - mfrOffset[0]) / mfrGain[0];
-                        y = (yRaw * 100.0d - mfrOffset[1]) / mfrGain[1];
-                        z = (zRaw * 100.0d - mfrOffset[2]) / mfrGain[2];
-
-                        t = (double)blockTime + (double)i * (1.0 / freq) * 1000;  // Unix milliseconds.
-
-                        writer.write(
-                                TimeUnit.MILLISECONDS.toNanos((long) t),
-                                (float) x, (float) y, (float) z, (float) temperature);
-
-                        hexPosition += 12;
-                        i++;
-
-                    } catch (NpyWriter.SchemaMismatchException e) {
-                        throw e;
-                    } catch (Exception e) {
-                        errCounter++;
-                        e.printStackTrace();
-                        break;  // rest of this block could be corrupted
+                    int pageSamples = writePageSamples(
+                            page, calibration, writer, result);
+                    if (pageSamples > 0) {
+                        validPageCount++;
+                        samplesWritten += pageSamples;
+                        result.sampleRate = page.sampleRate;
                     }
 
-                }
-
-                // Progress bar
-                blockCount++;
-                if (verbose) {
-                    if ((blockCount % 10000 == 0) || (blockCount == numBlocksTotal)) {
-                        System.out.print("Reading file... " + (blockCount * 100 / numBlocksTotal) + "%\r");
+                    if (options.verbose
+                            && (pageCount % 10000 == 0
+                            || pageCount == calibration.expectedPages)) {
+                        int percent = calibration.expectedPages > 0
+                                ? pageCount * 100 / calibration.expectedPages
+                                : 100;
+                        System.out.print("Reading file... " + percent + "%\r");
                     }
                 }
 
-            }
-            rawAccReader.close();
-
-            statusOK = 1;
-
-        } catch (NpyWriter.SchemaMismatchException e) {
-            throw e;
-        } catch (Exception e) {
-            e.printStackTrace();
-            statusOK = 0;
-
-        } finally {
-            try{
-                writer.close();
-            } catch (Exception e) {
-                e.printStackTrace();
+                if ((pageCount > 0 || calibration.expectedPages > 0)
+                        && validPageCount == 0) {
+                    throw new ReaderSupport.FormatException(
+                            "No valid GENEActiv pages were decoded");
+                }
+                if (pageCount != calibration.expectedPages && !truncatedPage) {
+                    result.recordRecoverableError(
+                            "GENEActiv page count differs from header: expected "
+                            + calibration.expectedPages + " but found " + pageCount);
+                }
             }
         }
-
-        Map<String, String> info = new HashMap<String, String>();
-        info.put("ReadOK", String.valueOf(statusOK));
-        info.put("ReadErrors", String.valueOf(errCounter));
-        info.put("SampleRate", String.valueOf(sampleRate));
-
-        // Persist reader status metadata alongside the converted data.
-        String outInfo = outDir + File.separator + "info.txt";
-        try {
-            FileWriter file = new FileWriter(outInfo);
-            for (Map.Entry<String, String> entry : info.entrySet()) {
-                file.write(entry.getKey() + ":" + entry.getValue() + "\n");
-            }
-            file.flush();
-            file.close();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-        return;
-
     }
 
-
-    /**
-     * Reads the .bin header, returning x/y/z gain and offset values together
-     * with the number of data blocks, following the GENEActiv manual
-     * ("Decoding .bin files", p. 27).
-     * http://www.geneactiv.org/wp-content/uploads/2014/03/
-     * geneactiv_instruction_manual_v1.2.pdf
-     */
-    private static int parseBinFileHeader(
-            BufferedReader reader,
-            int fileHeaderSize, int linesToAxesCalibration,
-            double[] gainVals, int[] offsetVals) {
-        for (int i = 0; i < linesToAxesCalibration; i++) {
-            readLine(reader);
+    private static Calibration readCalibration(BufferedReader reader)
+            throws IOException, ReaderSupport.FormatException {
+        Calibration calibration = new Calibration();
+        for (int line = 0; line < LINES_TO_CALIBRATION; line++) {
+            requireLine(reader, "GENEActiv file header");
         }
-        // The next lines contain alternating gain and offset values for x, y, and z.
-        gainVals[0] = Double.parseDouble(readLine(reader).split(":")[1].trim());
-        offsetVals[0] = Integer.parseInt(readLine(reader).split(":")[1].trim());
-        gainVals[1] = Double.parseDouble(readLine(reader).split(":")[1].trim());
-        offsetVals[1] = Integer.parseInt(readLine(reader).split(":")[1].trim());
-        gainVals[2] = Double.parseDouble(readLine(reader).split(":")[1].trim());
-        offsetVals[2] = Integer.parseInt(readLine(reader).split(":")[1].trim());
-        int volts = Integer.parseInt(readLine(reader).split(":")[1].trim()); // voltage
-        int lux = Integer.parseInt(readLine(reader).split(":")[1].trim()); // illuminance
-        readLine(reader); // blank line
-        readLine(reader); // memory status header
-        int numBlocksTotal = Integer.parseInt(readLine(reader).split(":")[1].trim());
 
-        // Skip the rest of the fixed-size header.
-        for (int i = 0; i < fileHeaderSize - linesToAxesCalibration - 11; i++) {
-            readLine(reader);
+        calibration.gains[0] = parseDoubleValue(
+                requireLine(reader, "x gain"), "x gain");
+        calibration.offsets[0] = parseIntValue(
+                requireLine(reader, "x offset"), "x offset");
+        calibration.gains[1] = parseDoubleValue(
+                requireLine(reader, "y gain"), "y gain");
+        calibration.offsets[1] = parseIntValue(
+                requireLine(reader, "y offset"), "y offset");
+        calibration.gains[2] = parseDoubleValue(
+                requireLine(reader, "z gain"), "z gain");
+        calibration.offsets[2] = parseIntValue(
+                requireLine(reader, "z offset"), "z offset");
+
+        parseIntValue(requireLine(reader, "voltage"), "Volts");
+        parseIntValue(requireLine(reader, "illuminance"), "Lux");
+        requireLine(reader, "header separator");
+        requireLine(reader, "memory status header");
+        calibration.expectedPages = parseIntValue(
+                requireLine(reader, "page count"), "Number of Pages");
+
+        int consumed = LINES_TO_CALIBRATION + 11;
+        for (int line = consumed; line < FILE_HEADER_LINES; line++) {
+            requireLine(reader, "GENEActiv file header");
         }
-        return numBlocksTotal;
-
+        return calibration;
     }
 
+    private static void validateCalibration(Calibration calibration)
+            throws ReaderSupport.FormatException {
+        for (int axis = 0; axis < calibration.gains.length; axis++) {
+            if (!Double.isFinite(calibration.gains[axis])
+                    || calibration.gains[axis] == 0) {
+                throw new ReaderSupport.FormatException(
+                        "Calibration gain must be finite and non-zero for axis " + axis);
+            }
+        }
+        if (calibration.expectedPages < 0) {
+            throw new ReaderSupport.FormatException("Page count must not be negative");
+        }
+    }
 
-    private static String readLine(BufferedReader reader) {
-        String line = "";
+    private static String[] readPage(BufferedReader reader) throws IOException {
+        String firstLine = reader.readLine();
+        if (firstLine == null) {
+            return null;
+        }
+
+        String[] lines = new String[PAGE_LINES];
+        lines[0] = firstLine;
+        for (int line = 1; line < PAGE_LINES; line++) {
+            lines[line] = reader.readLine();
+            if (lines[line] == null) {
+                throw new EOFException("Unexpected end of GENEActiv page");
+            }
+        }
+        return lines;
+    }
+
+    private static PageHeader parsePageHeader(String[] lines)
+            throws ReaderSupport.FormatException {
+        if (!"Recorded Data".equals(lines[0])) {
+            throw new ReaderSupport.FormatException("Missing Recorded Data marker");
+        }
         try {
-            line = reader.readLine();
-        } catch (Exception e) {
-            e.printStackTrace();
+            String timestamp = valueAfterColon(lines[3], "Page Time");
+            long startTimeMillis = LocalDateTime.parse(timestamp, PAGE_TIME_FORMAT)
+                    .toInstant(ZoneOffset.UTC)
+                    .toEpochMilli();
+            double temperature = Double.parseDouble(
+                    valueAfterColon(lines[5], "Temperature"));
+            double sampleRate = Double.parseDouble(
+                    valueAfterColon(lines[8], "Measurement Frequency"));
+            if (!Double.isFinite(temperature)) {
+                throw new ReaderSupport.FormatException("Temperature must be finite");
+            }
+            if (!Double.isFinite(sampleRate) || sampleRate <= 0) {
+                throw new ReaderSupport.FormatException(
+                        "Measurement Frequency must be positive and finite");
+            }
+            return new PageHeader(
+                    startTimeMillis, temperature, sampleRate, lines[9]);
+        } catch (NumberFormatException | DateTimeParseException error) {
+            throw new ReaderSupport.FormatException(
+                    "Invalid page timestamp or numeric metadata", error);
+        }
+    }
+
+    private static int writePageSamples(
+            PageHeader page,
+            Calibration calibration,
+            NpyWriter writer,
+            ReaderSupport.Result result) throws IOException {
+        if (page.payload.length() != PAGE_PAYLOAD_LENGTH
+                || !isHexadecimal(page.payload)) {
+            result.recordRecoverableError(
+                    "Skipping invalid GENEActiv page payload: expected "
+                    + PAGE_PAYLOAD_LENGTH + " hexadecimal characters");
+            return 0;
+        }
+
+        for (int sampleIndex = 0; sampleIndex < SAMPLES_PER_PAGE; sampleIndex++) {
+            int position = sampleIndex * HEX_CHARACTERS_PER_SAMPLE;
+            int xRaw = signed12Bit(page.payload, position);
+            int yRaw = signed12Bit(page.payload, position + 3);
+            int zRaw = signed12Bit(page.payload, position + 6);
+            double x = (xRaw * 100.0d - calibration.offsets[0])
+                    / calibration.gains[0];
+            double y = (yRaw * 100.0d - calibration.offsets[1])
+                    / calibration.gains[1];
+            double z = (zRaw * 100.0d - calibration.offsets[2])
+                    / calibration.gains[2];
+            long timeMillis = (long) (page.startTimeMillis
+                    + sampleIndex * 1000d / page.sampleRate);
+            writer.write(
+                    TimeUnit.MILLISECONDS.toNanos(timeMillis),
+                    (float) x,
+                    (float) y,
+                    (float) z,
+                    (float) page.temperature);
+        }
+        return SAMPLES_PER_PAGE;
+    }
+
+    private static boolean isHexadecimal(String value) {
+        for (int index = 0; index < value.length(); index++) {
+            if (Character.digit(value.charAt(index), 16) < 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static String requireLine(BufferedReader reader, String description)
+            throws IOException, ReaderSupport.FormatException {
+        String line = reader.readLine();
+        if (line == null) {
+            throw new ReaderSupport.FormatException(
+                    "Unexpected end of " + description);
         }
         return line;
     }
 
-
-    private static int getSignedIntFromHex(String data, int startPos, int length) {
-        int rawVal = Integer.parseInt(data.substring(startPos, startPos + length), 16);
-        int unsignedLimit = 4096; // 2^[length*4] #i.e. 3 hexBytes (12 bits)
-        int signedLimit = 2048; // 2^[length*(4-1)] #i.e. 3 hexBytes - 1 bit (11
-                                // bits) limit = 2048
-        if (rawVal >= signedLimit) {
-            rawVal = rawVal - unsignedLimit;
+    private static String valueAfterColon(String line, String expectedKey)
+            throws ReaderSupport.FormatException {
+        int separator = line.indexOf(':');
+        if (separator < 0 || !expectedKey.equals(line.substring(0, separator).trim())) {
+            throw new ReaderSupport.FormatException(
+                    "Expected " + expectedKey + " header field");
         }
-        return rawVal;
+        return line.substring(separator + 1).trim();
     }
 
-
-    private static long getEpochMillis(LocalDateTime date) {
-        return date.toInstant(ZoneOffset.UTC).toEpochMilli();
+    private static double parseDoubleValue(String line, String expectedKey)
+            throws ReaderSupport.FormatException {
+        try {
+            return Double.parseDouble(valueAfterColon(line, expectedKey));
+        } catch (NumberFormatException error) {
+            throw new ReaderSupport.FormatException(
+                    "Invalid numeric value for " + expectedKey, error);
+        }
     }
 
+    private static int parseIntValue(String line, String expectedKey)
+            throws ReaderSupport.FormatException {
+        try {
+            return Integer.parseInt(valueAfterColon(line, expectedKey));
+        } catch (NumberFormatException error) {
+            throw new ReaderSupport.FormatException(
+                    "Invalid numeric value for " + expectedKey, error);
+        }
+    }
 
-    private static long secs2Nanos(double num) {
-        return (long) (TimeUnit.SECONDS.toNanos(1) * num);
+    private static int signed12Bit(String data, int position) {
+        int rawValue = Integer.parseInt(data.substring(position, position + 3), 16);
+        return rawValue >= 2048 ? rawValue - 4096 : rawValue;
     }
 }
