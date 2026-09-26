@@ -53,15 +53,16 @@ def test_clean_sdist_and_editable_builds_compile_java_readers(tmp_path):
     subprocess.run(
         [
             sys.executable,
-            "-c",
-            (
-                "import sys; "
-                "from setuptools.build_meta import build_editable; "
-                "build_editable(sys.argv[1])"
-            ),
+            "-m",
+            "pip",
+            "install",
+            "--no-deps",
+            "--target",
             str(editable_dist),
+            "--editable",
+            str(checkout),
         ],
-        cwd=checkout,
+        cwd=tmp_path,
         check=True,
         capture_output=True,
         text=True,
@@ -92,7 +93,6 @@ def test_clean_sdist_and_editable_builds_compile_java_readers(tmp_path):
             "pip",
             "wheel",
             "--no-deps",
-            "--no-build-isolation",
             "--wheel-dir",
             str(wheel_dir),
             str(sdist),
