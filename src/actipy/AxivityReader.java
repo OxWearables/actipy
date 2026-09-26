@@ -284,8 +284,9 @@ public class AxivityReader {
                 throw new ReaderSupport.FormatException("No valid CWA data block found");
             }
 
-            try (NpyWriter writer = new NpyWriter(
-                    options.dataPath(), firstDataBlock.format.outputLayout)) {
+            NpyWriter outputWriter = options.createWriter(
+                    firstDataBlock.format.outputLayout);
+            try (NpyWriter writer = outputWriter) {
                 BlockDecoder decoder = new BlockDecoder(
                         writer, firstDataBlock.format, result);
                 int samplesWritten = decoder.write(firstDataBlock);
@@ -304,7 +305,13 @@ public class AxivityReader {
                             int percent = totalBlocks > 0
                                     ? (int) (blocksRead * 100 / totalBlocks)
                                     : 100;
-                            System.out.print("Reading file... " + percent + "%\r");
+                            if (options.stream) {
+                                System.err.print(
+                                        "Reading file... " + percent + "%\r");
+                            } else {
+                                System.out.print(
+                                        "Reading file... " + percent + "%\r");
+                            }
                         }
                     }
                 } catch (EOFException error) {

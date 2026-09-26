@@ -64,7 +64,7 @@ public class ActigraphReader {
 
             try (InputStream activity = new BufferedInputStream(
                          zip.getInputStream(activityEntry), INPUT_BUFFER_SIZE);
-                 NpyWriter writer = new NpyWriter(options.dataPath(), NpyWriter.Layout.XYZ)) {
+                 NpyWriter writer = options.createWriter(NpyWriter.Layout.XYZ)) {
                 if (version == VALID_GT3_V1_FILE) {
                     readV1(activity, metadata, writer, result);
                 } else {

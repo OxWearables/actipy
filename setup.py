@@ -1,12 +1,34 @@
-import sys
+import codecs
 import os.path
+import sys
+
 # https://github.com/python-versioneer/python-versioneer/issues/193
 sys.path.insert(0, os.path.dirname(__file__))
 
 import setuptools
-import codecs
 
 import versioneer
+from build_java import compile_java
+
+cmdclass = versioneer.get_cmdclass()
+versioneer_build_py = cmdclass["build_py"]
+
+
+class build_py(versioneer_build_py):
+    """Build Python modules and compile the bundled Java readers."""
+
+    def run(self):
+        super().run()
+        source_dir = os.path.join("src", "actipy")
+        target_dir = (
+            source_dir
+            if getattr(self, "editable_mode", False)
+            else os.path.join(self.build_lib, "actipy")
+        )
+        compile_java(source_dir, target_dir)
+
+
+cmdclass["build_py"] = build_py
 
 
 def read(rel_path):
@@ -29,7 +51,7 @@ setuptools.setup(
     name="actipy",
     python_requires=">=3.8",
     version=versioneer.get_version(),
-    cmdclass=versioneer.get_cmdclass(),
+    cmdclass=cmdclass,
     description="Python package to process wearable accelerometer data",
     keywords="wearable accelerometer data processing",
     long_description=long_description,
@@ -49,7 +71,7 @@ setuptools.setup(
     ],
     packages=setuptools.find_packages(where="src", exclude=("test", "tests")),
     package_dir={"": "src"},
-    package_data={"actipy": ["py.typed"]},
+    package_data={"actipy": ["py.typed", "*.class"]},
     include_package_data=True,
     install_requires=[
         "numpy>=1.22",
