@@ -240,6 +240,10 @@ def read_device(input_file: str,
     if cutdays > 0:
         data = data.loc[:data.index[-1] - pd.Timedelta(days=cutdays)]
 
+    if any((start_time is not None, end_time is not None, skipdays, cutdays)):
+        data = data.copy(deep=True)
+        data.index = data.index.copy(deep=True)
+
     # NOTE: Using process() increases data ref count by 1, which increases
     # memory. So instead we just do everything here.
 
@@ -255,21 +259,28 @@ def read_device(input_file: str,
 
     if lowpass_hz not in (None, False):
         timer.start("Lowpass filter...")
-        data, info_lowpass = P.lowpass(data, info['SampleRate'], cast(float, lowpass_hz))
+        data, info_lowpass = P.lowpass(
+            data,
+            info['SampleRate'],
+            cast(float, lowpass_hz),
+            _inplace=True,
+        )
         info.update(info_lowpass)
         timer.stop()
 
     if calibrate_gravity:
         timer.start("Gravity calibration...")
         calib_kwargs = calibrate_gravity_kwargs or {}
-        data, info_calib = P.calibrate_gravity(data, return_coeffs=False, **calib_kwargs)
+        data, info_calib = P.calibrate_gravity(
+            data, return_coeffs=False, _inplace=True, **calib_kwargs
+        )
         info.update(info_calib)
         timer.stop()
 
     if detect_nonwear:
         timer.start("Nonwear detection...")
         nonwear_kwargs = flag_nonwear_kwargs or {}
-        data, info_nonwear = P.flag_nonwear(data, **nonwear_kwargs)
+        data, info_nonwear = P.flag_nonwear(data, _inplace=True, **nonwear_kwargs)
         info.update(info_nonwear)
         timer.stop()
 
