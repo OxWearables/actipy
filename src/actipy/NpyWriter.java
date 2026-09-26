@@ -2,6 +2,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.io.RandomAccessFile;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
@@ -24,18 +25,22 @@ public class NpyWriter implements AutoCloseable {
     private static final int HEADER_SIZE = BLOCK_SIZE * 16;
     private static final byte[] NPY_HEADER = new byte[] {
             (byte) 0x93, 'N', 'U', 'M', 'P', 'Y'};
+    private static final byte[] STREAM_MAGIC = new byte[] {
+            'A', 'C', 'T', 'I', 'P', 'Y', '0', '1'};
 
     public enum Layout {
-        XYZ(new String[] {"x", "y", "z"}),
-        XYZT(new String[] {"x", "y", "z", "temperature"}),
-        XYZTL(new String[] {"x", "y", "z", "temperature", "light"}),
-        XYZ_GYRO_TL(new String[] {
+        XYZ(1, new String[] {"x", "y", "z"}),
+        XYZT(2, new String[] {"x", "y", "z", "temperature"}),
+        XYZTL(3, new String[] {"x", "y", "z", "temperature", "light"}),
+        XYZ_GYRO_TL(6, new String[] {
                 "x", "y", "z", "gyro_x", "gyro_y", "gyro_z",
                 "temperature", "light"});
 
+        private final int streamCode;
         private final String[] floatFields;
 
-        Layout(String[] floatFields) {
+        Layout(int streamCode, String[] floatFields) {
+            this.streamCode = streamCode;
             this.floatFields = floatFields;
         }
 
@@ -125,9 +130,12 @@ public class NpyWriter implements AutoCloseable {
     private final Map<String, FieldType> fields;
     private final Layout primitiveLayout;
     private final ByteBuffer buffer;
+    private final ByteBuffer[] columnBuffers;
     private final File file;
     private final RandomAccessFile randomAccessFile;
+    private final OutputStream streamOutput;
     private int linesWritten;
+    private int rowsBuffered;
     private boolean closed;
 
     public NpyWriter(String outputFile, Layout layout) {
@@ -144,7 +152,9 @@ public class NpyWriter implements AutoCloseable {
         this.primitiveLayout = getPrimitiveLayout(fields);
         this.buffer = ByteBuffer.allocate(
                 ROWS_PER_BUFFER * getBytesPerLine(fields)).order(NATIVE_BYTE_ORDER);
+        this.columnBuffers = null;
         this.file = new File(outputFile);
+        this.streamOutput = null;
 
         RandomAccessFile openedFile = null;
         try {
@@ -165,6 +175,26 @@ public class NpyWriter implements AutoCloseable {
         this.randomAccessFile = openedFile;
     }
 
+    public NpyWriter(OutputStream output, Layout layout) throws IOException {
+        if (output == null) {
+            throw new IllegalArgumentException("The output stream must not be null");
+        }
+        if (layout == null) {
+            throw new IllegalArgumentException("The stream layout must not be null");
+        }
+
+        this.outputFile = "parser stream";
+        this.fields = parseFields(layout.schema());
+        this.primitiveLayout = layout;
+        this.buffer = null;
+        this.columnBuffers = createColumnBuffers(fields);
+        this.file = null;
+        this.randomAccessFile = null;
+        this.streamOutput = output;
+        output.write(STREAM_MAGIC);
+        output.write(layout.streamCode);
+    }
+
     public NpyWriter(String outputFile) {
         this(outputFile, Layout.XYZ);
     }
@@ -172,8 +202,11 @@ public class NpyWriter implements AutoCloseable {
     public void write(Map<String, Object> items) throws IOException {
         ensureOpen();
         validateItems(items);
+        int fieldIndex = 0;
         for (Map.Entry<String, FieldType> field : fields.entrySet()) {
-            field.getValue().put(buffer, items.get(field.getKey()));
+            field.getValue().put(
+                    targetBuffer(fieldIndex), items.get(field.getKey()));
+            fieldIndex++;
         }
         finishRow();
     }
@@ -181,10 +214,10 @@ public class NpyWriter implements AutoCloseable {
     public void write(long time, float x, float y, float z) throws IOException {
         ensureOpen();
         requirePrimitiveLayout(Layout.XYZ);
-        buffer.putLong(time);
-        buffer.putFloat(x);
-        buffer.putFloat(y);
-        buffer.putFloat(z);
+        putTime(time);
+        putFloat(1, x);
+        putFloat(2, y);
+        putFloat(3, z);
         finishRow();
     }
 
@@ -193,11 +226,11 @@ public class NpyWriter implements AutoCloseable {
             float x, float y, float z, float temperature) throws IOException {
         ensureOpen();
         requirePrimitiveLayout(Layout.XYZT);
-        buffer.putLong(time);
-        buffer.putFloat(x);
-        buffer.putFloat(y);
-        buffer.putFloat(z);
-        buffer.putFloat(temperature);
+        putTime(time);
+        putFloat(1, x);
+        putFloat(2, y);
+        putFloat(3, z);
+        putFloat(4, temperature);
         finishRow();
     }
 
@@ -207,12 +240,12 @@ public class NpyWriter implements AutoCloseable {
             float light) throws IOException {
         ensureOpen();
         requirePrimitiveLayout(Layout.XYZTL);
-        buffer.putLong(time);
-        buffer.putFloat(x);
-        buffer.putFloat(y);
-        buffer.putFloat(z);
-        buffer.putFloat(temperature);
-        buffer.putFloat(light);
+        putTime(time);
+        putFloat(1, x);
+        putFloat(2, y);
+        putFloat(3, z);
+        putFloat(4, temperature);
+        putFloat(5, light);
         finishRow();
     }
 
@@ -222,21 +255,37 @@ public class NpyWriter implements AutoCloseable {
             float gyroY, float gyroZ, float temperature, float light) throws IOException {
         ensureOpen();
         requirePrimitiveLayout(Layout.XYZ_GYRO_TL);
-        buffer.putLong(time);
-        buffer.putFloat(x);
-        buffer.putFloat(y);
-        buffer.putFloat(z);
-        buffer.putFloat(gyroX);
-        buffer.putFloat(gyroY);
-        buffer.putFloat(gyroZ);
-        buffer.putFloat(temperature);
-        buffer.putFloat(light);
+        putTime(time);
+        putFloat(1, x);
+        putFloat(2, y);
+        putFloat(3, z);
+        putFloat(4, gyroX);
+        putFloat(5, gyroY);
+        putFloat(6, gyroZ);
+        putFloat(7, temperature);
+        putFloat(8, light);
         finishRow();
+    }
+
+    private ByteBuffer targetBuffer(int fieldIndex) {
+        return streamOutput == null ? buffer : columnBuffers[fieldIndex];
+    }
+
+    private void putTime(long value) {
+        targetBuffer(0).putLong(value);
+    }
+
+    private void putFloat(int fieldIndex, float value) {
+        targetBuffer(fieldIndex).putFloat(value);
     }
 
     private void finishRow() throws IOException {
         linesWritten++;
-        if (!buffer.hasRemaining()) {
+        if (streamOutput != null) {
+            rowsBuffered++;
+        }
+        if ((streamOutput == null && !buffer.hasRemaining())
+                || rowsBuffered == ROWS_PER_BUFFER) {
             flushBuffer();
         }
     }
@@ -278,11 +327,27 @@ public class NpyWriter implements AutoCloseable {
     }
 
     private void flushBuffer() throws IOException {
+        if (streamOutput != null) {
+            flushStreamChunk();
+            return;
+        }
         int bytesUsed = buffer.position();
         if (bytesUsed > 0) {
             randomAccessFile.write(buffer.array(), 0, bytesUsed);
             buffer.clear();
         }
+    }
+
+    private void flushStreamChunk() throws IOException {
+        if (rowsBuffered == 0) {
+            return;
+        }
+        writeLittleEndianInt(streamOutput, rowsBuffered);
+        for (ByteBuffer column : columnBuffers) {
+            streamOutput.write(column.array(), 0, column.position());
+            column.clear();
+        }
+        rowsBuffered = 0;
     }
 
     private void writeHeader() throws IOException {
@@ -326,11 +391,19 @@ public class NpyWriter implements AutoCloseable {
 
     private void finalizeFile() throws IOException {
         flushBuffer();
-        writeHeader();
+        if (streamOutput == null) {
+            writeHeader();
+        } else {
+            writeLittleEndianInt(streamOutput, 0);
+            streamOutput.flush();
+        }
     }
 
     public void compress(String compressedOutputFile) {
         ensureOpen();
+        if (streamOutput != null) {
+            throw new IllegalStateException("Cannot compress a parser stream");
+        }
         try {
             File compressedFile = new File(compressedOutputFile);
             if (file.getCanonicalFile().equals(compressedFile.getCanonicalFile())) {
@@ -369,17 +442,18 @@ public class NpyWriter implements AutoCloseable {
         } catch (IOException error) {
             failure = error;
         }
-        try {
-            randomAccessFile.close();
-        } catch (IOException error) {
-            if (failure == null) {
-                failure = error;
-            } else {
-                failure.addSuppressed(error);
+        if (randomAccessFile != null) {
+            try {
+                randomAccessFile.close();
+            } catch (IOException error) {
+                if (failure == null) {
+                    failure = error;
+                } else {
+                    failure.addSuppressed(error);
+                }
             }
-        } finally {
-            closed = true;
         }
+        closed = true;
 
         if (failure != null) {
             throw new UncheckedIOException("Could not finalize " + outputFile, failure);
@@ -387,6 +461,9 @@ public class NpyWriter implements AutoCloseable {
     }
 
     public void closeAndDelete() {
+        if (streamOutput != null) {
+            throw new IllegalStateException("Cannot delete a parser stream");
+        }
         close();
         if (file.exists() && !file.delete()) {
             throw new IllegalStateException("Could not delete " + outputFile);
@@ -408,6 +485,18 @@ public class NpyWriter implements AutoCloseable {
             bytesPerLine += type.byteWidth;
         }
         return bytesPerLine;
+    }
+
+    private static ByteBuffer[] createColumnBuffers(
+            Map<String, FieldType> fields) {
+        ByteBuffer[] buffers = new ByteBuffer[fields.size()];
+        int index = 0;
+        for (FieldType type : fields.values()) {
+            buffers[index] = ByteBuffer.allocate(ROWS_PER_BUFFER * type.byteWidth)
+                    .order(NATIVE_BYTE_ORDER);
+            index++;
+        }
+        return buffers;
     }
 
     private static Layout getPrimitiveLayout(Map<String, FieldType> fields) {
@@ -446,5 +535,13 @@ public class NpyWriter implements AutoCloseable {
             short value) throws IOException {
         output.writeByte(value & 0xFF);
         output.writeByte((value >>> 8) & 0xFF);
+    }
+
+    private static void writeLittleEndianInt(OutputStream output, int value)
+            throws IOException {
+        output.write(value & 0xFF);
+        output.write((value >>> 8) & 0xFF);
+        output.write((value >>> 16) & 0xFF);
+        output.write((value >>> 24) & 0xFF);
     }
 }

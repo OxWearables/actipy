@@ -1,4 +1,7 @@
+import java.io.BufferedOutputStream;
 import java.io.File;
+import java.io.FileDescriptor;
+import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -13,17 +16,24 @@ final class ReaderSupport {
         final String inputFile;
         final String outputDirectory;
         final boolean verbose;
+        final boolean stream;
 
-        private Options(String inputFile, String outputDirectory, boolean verbose) {
+        private Options(
+                String inputFile,
+                String outputDirectory,
+                boolean verbose,
+                boolean stream) {
             this.inputFile = inputFile;
             this.outputDirectory = outputDirectory;
             this.verbose = verbose;
+            this.stream = stream;
         }
 
         static Options parse(String[] args) {
             String inputFile = null;
             String outputDirectory = null;
             boolean verbose = false;
+            boolean stream = false;
 
             for (int index = 0; index < args.length; index++) {
                 if ("-i".equals(args[index]) && index < args.length - 1) {
@@ -32,6 +42,8 @@ final class ReaderSupport {
                     outputDirectory = args[++index];
                 } else if ("-v".equals(args[index])) {
                     verbose = true;
+                } else if ("--stream".equals(args[index])) {
+                    stream = true;
                 }
             }
 
@@ -41,11 +53,23 @@ final class ReaderSupport {
             if (outputDirectory == null) {
                 throw new IllegalArgumentException("No output directory specified");
             }
-            return new Options(inputFile, outputDirectory, verbose);
+            return new Options(inputFile, outputDirectory, verbose, stream);
         }
 
         String dataPath() {
             return outputDirectory + File.separator + "data.npy";
+        }
+
+        NpyWriter createWriter(NpyWriter.Layout layout) throws IOException {
+            if (!stream) {
+                return new NpyWriter(dataPath(), layout);
+            }
+
+            // Stdout is reserved for the binary parser stream in stream mode.
+            return new NpyWriter(
+                    new BufferedOutputStream(
+                            new FileOutputStream(FileDescriptor.out)),
+                    layout);
         }
     }
 
@@ -89,7 +113,9 @@ final class ReaderSupport {
         Result result = new Result();
         int exitCode = 0;
         try {
-            Files.deleteIfExists(new File(options.dataPath()).toPath());
+            if (!options.stream) {
+                Files.deleteIfExists(new File(options.dataPath()).toPath());
+            }
             converter.convert(options, result);
             result.readOk = 1;
         } catch (Exception error) {

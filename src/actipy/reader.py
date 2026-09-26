@@ -39,11 +39,23 @@ import tempfile
 import time
 import zipfile
 from datetime import datetime
+from io import BufferedReader
 from numbers import Real
-from typing import IO, Any, Dict, List, Literal, Optional, Tuple, Union, cast
+from typing import (
+    IO,
+    Any,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    Union,
+    cast,
+)
 
 import numpy as np
 import pandas as pd
+from numpy.typing import NDArray
 
 from actipy import matrix_reader
 from actipy import processing as P
@@ -54,6 +66,19 @@ Info = Dict[str, Any]
 Frequency = Optional[Union[int, float, bool]]
 ResampleFrequency = Optional[Union[Literal['uniform'], int, float, bool]]
 Timestamp = Optional[Union[str, datetime]]
+StreamColumns = Dict[str, NDArray[Any]]
+
+_JAVA_STREAM_MAGIC = b'ACTIPY01'
+_JAVA_STREAM_ROWS_PER_CHUNK = 8192
+_JAVA_STREAM_SCHEMAS = {
+    1: ('time', 'x', 'y', 'z'),
+    2: ('time', 'x', 'y', 'z', 'temperature'),
+    3: ('time', 'x', 'y', 'z', 'temperature', 'light'),
+    6: (
+        'time', 'x', 'y', 'z', 'gyro_x', 'gyro_y', 'gyro_z',
+        'temperature', 'light',
+    ),
+}
 
 
 def _validate_resample_frequency(resample_hz: object) -> None:
@@ -205,13 +230,11 @@ def read_device(input_file: str,
 
     data, info = _read_device(input_file, verbose)
 
-    # Filter data by start/end time, if specified
     if start_time is not None:
         data = data.loc[cast(Any, start_time):]
     if end_time is not None:
         data = data.loc[:cast(Any, end_time)]
 
-    # Skip/cut days, if specified
     if skipdays > 0:
         data = data.loc[data.index[0] + pd.Timedelta(days=skipdays):]
     if cutdays > 0:
@@ -220,7 +243,6 @@ def read_device(input_file: str,
     # NOTE: Using process() increases data ref count by 1, which increases
     # memory. So instead we just do everything here.
 
-    # Basic quality control
     timer.start("Quality control...")
     data, info_qc = P.quality_control(data, info['SampleRate'])
     info_qc['ReadErrors'] += info['ReadErrors']
@@ -386,10 +408,7 @@ def process(data: pd.DataFrame, sample_rate: float,
 
 
 def _read_device(input_file: str, verbose: bool = True) -> Tuple[pd.DataFrame, Info]:
-    """ Internal function that interfaces with the Java parser to read the
-    device file. Returns parsed data as a pandas dataframe, and a dict with
-    general info.
-    """
+    """Read a device file with the Java parser and return data and metadata."""
 
     # Use a separate reader if the file is from a Matrix device
     if matrix_reader.is_matrix_bin_file(input_file):
@@ -399,7 +418,6 @@ def _read_device(input_file: str, verbose: bool = True) -> Tuple[pd.DataFrame, I
 
         timer = Timer(verbose)
 
-        # Temporary directory for intermediate parser files.
         tmpdir = tempfile.mkdtemp()
 
         info: Info = {}
@@ -411,52 +429,39 @@ def _read_device(input_file: str, verbose: bool = True) -> Tuple[pd.DataFrame, I
             input_file = decompr(input_file, target_dir=tmpdir)
             timer.stop()
 
-        # Device info
         info_device = get_device_info(input_file)
         info.update(info_device)
 
-        # Parsing. Main action happens here.
         timer.start("Reading file...")
-        info_java = java_read_device(input_file, tmpdir, verbose)
+        streamed_data, info_java = _java_read_device_stream(
+            input_file, tmpdir, verbose
+        )
         info.update(info_java)
         timer.stop()
 
         timer.start("Converting to dataframe...")
-        # NOTE: To reduce memory usage, we open the file as mmap and use
-        # np.asarray to define the dict for the dataframe construction. Note
-        # that the dataframe uses copy=True because we need to remove all
-        # references to the mmap object so that the temporary directory can be
-        # deleted later (another way is to use np.array and copy=False).
-        data_mmap = np.load(os.path.join(tmpdir, "data.npy"), mmap_mode='r')
-        data = pd.DataFrame({c: np.asarray(data_mmap[c]) for c in data_mmap.dtype.names}, copy=True)
+        # Each streamed field already owns a contiguous in-memory array, so
+        # pandas can use it directly without another full data copy.
+        data = pd.DataFrame(streamed_data, copy=False)
         data.set_index('time', inplace=True)
-        del data_mmap  # delete this so that the temporary directory can be deleted
         timer.stop()
 
         return data, info
 
     finally:
 
-        # Cleanup, delete temporary directory
         try:
-            # NOTE: For the tmpdir to be deleted, all references to the mmap
-            # object must have been deleted. This includes data_mmap, but also
-            # indirect references like the dataframe (copy=False) or arrays
-            # created with np.asarray.
             shutil.rmtree(tmpdir)
         except OSError as e:
             print(f"Error: {e.filename} - {e.strerror}.")
 
 
 def _read_device_matrix(input_file: str, verbose: bool = True) -> Tuple[pd.DataFrame, Info]:
-    """ Internal function that reads a Matrix device file specifically. Returns
-    parsed data as a pandas dataframe, and a dict with general info.
-    """
+    """Read a Matrix device file and return data and metadata."""
     try:
 
         timer = Timer(verbose)
 
-        # Temporary directory for intermediate conversion files.
         tmpdir = tempfile.mkdtemp()
 
         info: Info = {}
@@ -465,16 +470,13 @@ def _read_device_matrix(input_file: str, verbose: bool = True) -> Tuple[pd.DataF
         info['Device'] = 'Matrix'
         info['DeviceID'] = 'Matrix'
 
-        # Decompress file if it is compressed
         if input_file.lower().endswith((".gz", ".zip")):
             timer.start("Decompressing...")
             input_file = decompr(input_file, target_dir=tmpdir)
             timer.stop()
 
-        # Parsed data will be extracted to a CSV file
         output_file = os.path.join(tmpdir, "data.csv")
 
-        # Parsing. Main action happens here.
         print("Reading file...")
         matrix_reader.bin2csv(input_file, output_file)
         print("Done!")
@@ -501,9 +503,7 @@ def _read_device_matrix(input_file: str, verbose: bool = True) -> Tuple[pd.DataF
 
     finally:
 
-        # Cleanup, delete temporary directory
         try:
-            # Remove the temporary directory and its intermediate CSV file.
             shutil.rmtree(tmpdir)
         except OSError as e:
             print(f"Error: {e.filename} - {e.strerror}.")
@@ -513,17 +513,7 @@ def _read_device_matrix(input_file: str, verbose: bool = True) -> Tuple[pd.DataF
 def java_read_device(input_file: str, output_dir: str, verbose: bool = True) -> Info:
     """Call the Java reader for a supported device file."""
 
-    if input_file.lower().endswith('.cwa'):
-        java_reader = 'AxivityReader'
-
-    elif input_file.lower().endswith('.gt3x'):
-        java_reader = 'ActigraphReader'
-
-    elif input_file.lower().endswith('.bin'):
-        java_reader = 'GENEActivReader'
-
-    else:
-        raise ValueError(f"Unknown file extension: {input_file}")
+    java_reader = _java_reader_class(input_file)
 
     command: List[str] = [
         "java",
@@ -537,7 +527,171 @@ def java_read_device(input_file: str, output_dir: str, verbose: bool = True) -> 
         command.append("-v")
     subprocess.run(command, check=True)
 
-    # Load info.txt file. Each line is a key:value pair.
+    return _read_java_info(output_dir)
+
+
+def _java_reader_class(input_file: str) -> str:
+    """Select the Java parser class for a supported device file."""
+
+    if input_file.lower().endswith('.cwa'):
+        return 'AxivityReader'
+
+    if input_file.lower().endswith('.gt3x'):
+        return 'ActigraphReader'
+
+    if input_file.lower().endswith('.bin'):
+        return 'GENEActivReader'
+
+    raise ValueError(f"Unknown file extension: {input_file}")
+
+
+def _java_read_device_stream(
+    input_file: str,
+    output_dir: str,
+    verbose: bool = True,
+) -> Tuple[StreamColumns, Info]:
+    """Read device columns directly from a Java parser binary stream."""
+
+    command: List[str] = [
+        "java",
+        "-XX:ParallelGCThreads=1",
+        "-cp", str(pathlib.Path(__file__).parent),
+        _java_reader_class(input_file),
+        "-i", input_file,
+        "-o", output_dir,
+        "--stream",
+    ]
+    if verbose:
+        command.append("-v")
+
+    process = subprocess.Popen(command, stdout=subprocess.PIPE)
+    if process.stdout is None:  # pragma: no cover - guaranteed by PIPE
+        process.kill()
+        process.wait()
+        raise RuntimeError("Could not open the Java parser output stream")
+
+    try:
+        arrays = _read_java_stream_arrays(
+            cast(BufferedReader, process.stdout)
+        )
+    except EOFError as error:
+        process.stdout.close()
+        return_code = process.wait()
+        if return_code != 0:
+            raise subprocess.CalledProcessError(
+                return_code, command
+            ) from error
+        raise
+    except BaseException:
+        process.stdout.close()
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+        raise
+    else:
+        process.stdout.close()
+        return_code = process.wait()
+        if return_code != 0:
+            raise subprocess.CalledProcessError(return_code, command)
+
+    return arrays, _read_java_info(output_dir)
+
+
+def _read_java_stream_arrays(stream: BufferedReader) -> StreamColumns:
+    """Decode the chunk framing around streamed device columns."""
+
+    magic = _read_exact(stream, len(_JAVA_STREAM_MAGIC))
+    if magic != _JAVA_STREAM_MAGIC:
+        raise ValueError("Invalid Java parser stream header")
+    schema_code = _read_exact(stream, 1)[0]
+    try:
+        fields = _JAVA_STREAM_SCHEMAS[schema_code]
+    except KeyError as error:
+        raise ValueError(
+            f"Unsupported Java parser stream schema: {schema_code}"
+        ) from error
+
+    dtypes = {
+        field: np.dtype('datetime64[ns]' if field == 'time' else 'f4')
+        for field in fields
+    }
+    arrays = {
+        field: np.empty(0, dtype=dtypes[field]) for field in fields
+    }
+    max_rows = np.iinfo(np.intp).max // sum(
+        dtype.itemsize for dtype in dtypes.values()
+    )
+
+    rows = 0
+    capacity = 0
+    while True:
+        chunk_rows = struct.unpack('<I', _read_exact(stream, 4))[0]
+        if chunk_rows == 0:
+            break
+        if chunk_rows > _JAVA_STREAM_ROWS_PER_CHUNK:
+            raise ValueError(
+                f"Invalid Java parser stream chunk size: {chunk_rows}"
+            )
+        if chunk_rows > max_rows - rows:
+            raise ValueError("Java parser stream is too large")
+        chunk_end = rows + chunk_rows
+        if chunk_end > capacity:
+            capacity = min(
+                max_rows,
+                max(
+                    chunk_end,
+                    _JAVA_STREAM_ROWS_PER_CHUNK
+                    if capacity == 0 else capacity * 2,
+                ),
+            )
+            for values in arrays.values():
+                values.resize(capacity, refcheck=False)
+        for field in fields:
+            _read_array_slice(stream, arrays[field], rows, chunk_end)
+        rows = chunk_end
+
+    for values in arrays.values():
+        values.resize(rows, refcheck=False)
+    return arrays
+
+
+def _read_exact(stream: BufferedReader, size: int) -> bytes:
+    """Read exactly ``size`` bytes or fail on a truncated parser stream."""
+
+    chunks = bytearray(size)
+    view = memoryview(chunks)
+    offset = 0
+    while offset < size:
+        count = stream.readinto(view[offset:])
+        if not count:
+            raise EOFError("Java parser stream ended unexpectedly")
+        offset += count
+    return bytes(chunks)
+
+
+def _read_array_slice(
+    stream: BufferedReader,
+    target: NDArray[Any],
+    start: int,
+    end: int,
+) -> None:
+    """Fill a contiguous slice of a one-dimensional NumPy array."""
+
+    byte_view = memoryview(cast(Any, target.view(np.uint8)))
+    item_size = target.dtype.itemsize
+    view = byte_view[start * item_size:end * item_size]
+    offset = 0
+    while offset < len(view):
+        count = stream.readinto(view[offset:])
+        if not count:
+            raise EOFError("Java parser stream ended unexpectedly")
+        offset += count
+
+
+def _read_java_info(output_dir: str) -> Info:
+    """Load and type the metadata emitted by a Java device reader."""
+
+    # Each line is a key:value pair.
     with open(os.path.join(output_dir, "info.txt"), 'r') as f:
         info: Info = dict(line.split(':') for line in f.read().splitlines())
 
@@ -650,7 +804,7 @@ def get_gt3x_id(gt3xfile: str) -> Optional[str]:
 
 
 def fix_nonincr_time(data: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
-    """ Fix if time non-increasing (rarely occurs) """
+    """Remove samples whose timestamps do not increase."""
     errs = (data.index.to_series().diff() <= pd.Timedelta(0)).sum()
     if errs > 0:
         print("Found non-increasing data timestamps. Fixing...")
@@ -663,7 +817,7 @@ def fix_nonincr_time(data: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
 
 
 def infer_sample_rate(t: pd.DatetimeIndex) -> float:
-    """ Like pd.infer_freq but more forgiving """
+    """Estimate sample rate after excluding timing outliers."""
     tdiff = t.to_series().diff()
     q1, q3 = tdiff.quantile([0.25, 0.75])
     tdiff = tdiff[(q1 <= tdiff) & (tdiff <= q3)]

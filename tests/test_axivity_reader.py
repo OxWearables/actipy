@@ -1,3 +1,4 @@
+import os
 import shutil
 import struct
 import subprocess
@@ -35,22 +36,28 @@ def axivity_reader(tmp_path_factory):
         check=True,
     )
 
-    def run(input_file, output_dir, check=True):
-        output_dir.mkdir()
+    def run(
+            input_file, output_dir, check=True, stream=False,
+            stdout=subprocess.PIPE):
+        output_dir.mkdir(exist_ok=True)
+        command = [
+            java,
+            "-cp",
+            str(classes),
+            "AxivityReader",
+            "-i",
+            str(input_file),
+            "-o",
+            str(output_dir),
+        ]
+        if stream:
+            command.append("--stream")
         return subprocess.run(
-            [
-                java,
-                "-cp",
-                str(classes),
-                "AxivityReader",
-                "-i",
-                str(input_file),
-                "-o",
-                str(output_dir),
-            ],
+            command,
             check=check,
-            capture_output=True,
-            text=True,
+            stdout=stdout,
+            stderr=subprocess.PIPE,
+            text=not stream,
         )
 
     return run
@@ -153,6 +160,84 @@ def test_axivity_reader_decodes_ax3_samples_and_metadata(
     }
 
 
+def test_axivity_reader_streams_columnar_chunks(axivity_reader, tmp_path):
+    input_file = tmp_path / "sample.cwa"
+    output_dir = tmp_path / "output"
+    input_file.write_bytes(
+        _axivity_block([(256, -256, 128), (512, 0, -512)])
+    )
+
+    output_dir.mkdir()
+    stale_data = output_dir / "data.npy"
+    stale_data.write_bytes(b"preserve me")
+
+    result = axivity_reader(input_file, output_dir, stream=True)
+
+    assert stale_data.read_bytes() == b"preserve me"
+    output = memoryview(result.stdout)
+    assert bytes(output[:8]) == b"ACTIPY01"
+    assert output[8] == 3
+    assert struct.unpack_from("<I", output, 9)[0] == 2
+    offset = 13
+    times = np.frombuffer(output[offset:offset + 16], dtype="datetime64[ns]")
+    offset += 16
+    columns = []
+    for _ in range(5):
+        columns.append(np.frombuffer(output[offset:offset + 8], dtype="f4"))
+        offset += 8
+    assert struct.unpack_from("<I", output, offset)[0] == 0
+    np.testing.assert_array_equal(
+        times,
+        np.array(
+            ["2024-01-02T03:04:05.000", "2024-01-02T03:04:05.250"],
+            dtype="datetime64[ns]",
+        ),
+    )
+    np.testing.assert_array_equal(columns[0], [1.0, 2.0])
+    np.testing.assert_array_equal(columns[1], [-1.0, 0.0])
+    np.testing.assert_array_equal(columns[2], [0.5, -2.0])
+    np.testing.assert_array_equal(columns[3], [20.0, 20.0])
+    np.testing.assert_allclose(columns[4], [10.0, 10.0])
+
+
+def test_axivity_stream_failure_preserves_existing_data_file(
+        axivity_reader, tmp_path):
+    input_file = tmp_path / "invalid.cwa"
+    output_dir = tmp_path / "output"
+    input_file.write_bytes(b"not a CWA block")
+    output_dir.mkdir()
+    stale_data = output_dir / "data.npy"
+    stale_data.write_bytes(b"preserve me")
+
+    result = axivity_reader(
+        input_file, output_dir, check=False, stream=True
+    )
+
+    assert result.returncode != 0
+    assert stale_data.read_bytes() == b"preserve me"
+
+
+def test_axivity_stream_write_failure_exits_nonzero(
+        axivity_reader, tmp_path):
+    input_file = tmp_path / "sample.cwa"
+    output_dir = tmp_path / "output"
+    input_file.write_bytes(_axivity_block([(256, -256, 128)]))
+    read_fd, write_fd = os.pipe()
+    os.close(read_fd)
+
+    with os.fdopen(write_fd, "wb") as broken_stdout:
+        result = axivity_reader(
+            input_file,
+            output_dir,
+            check=False,
+            stream=True,
+            stdout=broken_stdout,
+        )
+
+    assert result.returncode != 0
+    assert b"Could not finalize parser stream" in result.stderr
+
+
 def test_axivity_reader_detects_ax6_gyroscope_layout(
         axivity_reader, tmp_path):
     input_file = tmp_path / "sample-ax6.cwa"
@@ -182,6 +267,29 @@ def test_axivity_reader_detects_ax6_gyroscope_layout(
     )
     np.testing.assert_allclose(
         np.column_stack((data["gyro_x"], data["gyro_y"], data["gyro_z"])),
+        [[1000.0, -500.0, 0.0], [500.0, 0.0, -250.0], [0.0, 250.0, -500.0]],
+    )
+
+    stream_result = axivity_reader(
+        input_file, tmp_path / "stream-output", stream=True
+    )
+    output = memoryview(stream_result.stdout)
+    assert bytes(output[:8]) == b"ACTIPY01"
+    assert output[8] == 6
+    assert struct.unpack_from("<I", output, 9)[0] == 3
+    offset = 13 + 3 * 8  # Skip the timestamp column.
+    stream_columns = []
+    for _ in range(8):
+        stream_columns.append(
+            np.frombuffer(output[offset:offset + 3 * 4], dtype="f4")
+        )
+        offset += 3 * 4
+    np.testing.assert_array_equal(
+        np.column_stack(stream_columns[:3]),
+        [[1.0, -1.0, 0.5], [2.0, 0.0, -2.0], [-1.0, 0.5, 1.0]],
+    )
+    np.testing.assert_allclose(
+        np.column_stack(stream_columns[3:6]),
         [[1000.0, -500.0, 0.0], [500.0, 0.0, -250.0], [0.0, 250.0, -500.0]],
     )
 

@@ -59,8 +59,7 @@ public class GENEActivReader {
             validateCalibration(calibration);
             short[] decodedSamples = new short[SAMPLES_PER_PAGE * 3];
 
-            try (NpyWriter writer = new NpyWriter(
-                    options.dataPath(), NpyWriter.Layout.XYZT)) {
+            try (NpyWriter writer = options.createWriter(NpyWriter.Layout.XYZT)) {
                 int pageCount = 0;
                 int validPageCount = 0;
                 int samplesWritten = 0;
@@ -107,7 +106,13 @@ public class GENEActivReader {
                         int percent = calibration.expectedPages > 0
                                 ? pageCount * 100 / calibration.expectedPages
                                 : 100;
-                        System.out.print("Reading file... " + percent + "%\r");
+                        if (options.stream) {
+                            System.err.print(
+                                    "Reading file... " + percent + "%\r");
+                        } else {
+                            System.out.print(
+                                    "Reading file... " + percent + "%\r");
+                        }
                     }
                 }
 
