@@ -99,10 +99,17 @@ def _index_from_ns(
     values: NDArray[np.int64],
     template: pd.DatetimeIndex,
 ) -> pd.DatetimeIndex:
-    """Build an index from epoch nanoseconds while preserving timezone."""
+    """Build an index from epoch nanoseconds while preserving its resolution."""
 
+    unit = cast(str, getattr(template, 'unit', 'ns'))
+    scale = _timestamp_scale(template)
+    ticks = values
+    if scale != 1 and np.all(values % scale == 0):
+        ticks = values // scale
+    else:
+        unit = 'ns'
     result = pd.DatetimeIndex(
-        values.astype('datetime64[ns]', copy=False),
+        ticks.astype(f'datetime64[{unit}]', copy=False),
         name=template.name,
     )
     if template.tz is not None:
@@ -341,7 +348,12 @@ def _write_xyz(
         for output, column_values in zip(arrays, values.T):
             output[start:stop] = column_values
     else:
-        result.iloc[start:stop, list(positions)] = values
+        for output, position, column_values in zip(
+            arrays, positions, values.T
+        ):
+            result.iloc[start:stop, position] = column_values.astype(
+                output.dtype, copy=False
+            )
 
 
 def _window_statistics(
