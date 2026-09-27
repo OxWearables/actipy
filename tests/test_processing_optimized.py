@@ -138,6 +138,12 @@ def test_timestamp_arithmetic_supports_all_datetime_resolutions():
         )
 
         assert P._has_uniform_rate(index, sample_rate=0.5, chunksize=4)
+        rebuilt = P._index_from_ns(
+            P._timestamps_to_ns(index.asi8, P._timestamp_scale(index)),
+            index,
+        )
+        assert rebuilt.dtype == index.dtype
+        pd.testing.assert_index_equal(rebuilt, index)
         _, info = P.quality_control(data, sample_rate=0.5)
         assert info["NumInterrupts"] == len(index) - 1
 
@@ -258,6 +264,29 @@ def test_calibration_statistics_do_not_truncate_integer_inputs():
         )
 
     assert integer_info["CalibNumSamples"] == float_info["CalibNumSamples"] == 0
+
+
+def test_xyz_fallback_assignment_preserves_float32_storage():
+    result = pd.DataFrame(
+        np.zeros((3, 3), dtype=np.float32), columns=["x", "y", "z"]
+    )
+    arrays = tuple(
+        result[column].to_numpy(copy=False) for column in result.columns
+    )
+    values = np.array(
+        [
+            [0.123456789, 1.23456789, 2.3456789],
+            [3.456789, 4.56789, 5.6789],
+        ],
+        dtype=np.float64,
+    )
+
+    P._write_xyz(result, arrays, (0, 1, 2), 0, values)
+
+    assert all(dtype == np.dtype(np.float32) for dtype in result.dtypes)
+    np.testing.assert_array_equal(
+        result.iloc[:2].to_numpy(), values.astype(np.float32)
+    )
 
 
 def test_inplace_lowpass_matches_nonmutating_path_across_chunks():
