@@ -50,6 +50,7 @@ Array = NDArray[Any]
 
 _NS_PER_SECOND = 1_000_000_000
 _DEFAULT_CHUNKSIZE = 1_000_000
+_MAX_CALIBRATION_SAMPLES = 100_000
 _XYZ_COLUMNS = ('x', 'y', 'z')
 _TIME_UNIT_TO_NS = {
     's': _NS_PER_SECOND,
@@ -275,8 +276,7 @@ def _prepare_xyz_output(
 
     result = data if inplace else data.copy(deep=True)
     for column in _XYZ_COLUMNS:
-        values = result[column].to_numpy(copy=False)
-        if not np.issubdtype(values.dtype, np.floating):
+        if not pd.api.types.is_float_dtype(result[column].dtype):
             result[column] = result[column].astype(calculation_dtype)
 
     arrays = tuple(
@@ -297,19 +297,36 @@ def _prepare_xyz_output(
     return result, arrays, positions
 
 
+def _column_numpy_dtype(data: pd.DataFrame, column: str) -> np.dtype[Any]:
+    """Return a column's NumPy dtype without materializing its values."""
+
+    dtype = data[column].dtype
+    if not pd.api.types.is_numeric_dtype(dtype):
+        raise TypeError(f"Column {column} must be numeric")
+    return np.dtype(getattr(dtype, 'numpy_dtype', dtype))
+
+
 def _xyz_calculation_dtype(data: pd.DataFrame) -> np.dtype[Any]:
     """Choose a floating dtype that can represent every acceleration axis."""
 
-    dtypes = []
-    for column in _XYZ_COLUMNS:
-        values = data[column].to_numpy(copy=False)
-        if not pd.api.types.is_numeric_dtype(data[column].dtype):
-            raise TypeError(f"Column {column} must be numeric")
-        dtypes.append(values.dtype)
+    dtypes = [_column_numpy_dtype(data, column) for column in _XYZ_COLUMNS]
     common = np.result_type(*dtypes, np.float32)
     if not np.issubdtype(common, np.floating):
         return np.dtype(np.float64)
     return np.dtype(common)
+
+
+def _calibration_dtype(
+    data: pd.DataFrame,
+    has_temperature: bool,
+) -> np.dtype[Any]:
+    """Choose calibration precision from every participating input column."""
+
+    columns = _XYZ_COLUMNS + (('temperature',) if has_temperature else ())
+    dtypes = [_column_numpy_dtype(data, column) for column in columns]
+    if not all(np.issubdtype(dtype, np.floating) for dtype in dtypes):
+        return np.dtype(np.float64)
+    return np.dtype(np.result_type(*dtypes, np.float32))
 
 
 def _missing_output_dtype(dtype: np.dtype[Any]) -> np.dtype[Any]:
@@ -354,6 +371,20 @@ def _write_xyz(
             result.iloc[start:stop, position] = column_values.astype(
                 output.dtype, copy=False
             )
+
+
+def _multiply_in_output_dtype(
+    source: Array,
+    factor: Any,
+    output: Array,
+) -> None:
+    """Multiply after converting the source to the output dtype."""
+
+    if source.dtype == output.dtype:
+        np.multiply(source, factor, out=output)
+        return
+    np.copyto(output, source, casting='unsafe')
+    np.multiply(output, factor, out=output)
 
 
 def _window_statistics(
@@ -812,6 +843,10 @@ def calibrate_gravity(  # noqa: C901
         T = T[~np.isnan(T)]
         T = T[nonzero]
 
+    xyz = xyz[:_MAX_CALIBRATION_SAMPLES]
+    if hasT:
+        T = T[:_MAX_CALIBRATION_SAMPLES]
+
     del means, deviations, stationary_indicator, xyz_deviations
     del nonzero
 
@@ -920,23 +955,66 @@ def calibrate_gravity(  # noqa: C901
 
         return data, info
 
-    calculation_dtype = np.dtype(np.float64)
+    dtype = _calibration_dtype(data, hasT)
     result, result_xyz, xyz_positions = _prepare_xyz_output(
-        data, _inplace, calculation_dtype
+        data, _inplace, dtype
     )
     n = len(data)
+    source_xyz = result_xyz
+    temperature = result['temperature'] if hasT else None
+    best_intercept = best_intercept.astype(dtype, copy=False)
+    best_slope = best_slope.astype(dtype, copy=False)
+    if hasT:
+        best_slopeT = best_slopeT.astype(dtype, copy=False)
+    buffer_size = min(chunksize, n)
+    calibrated = np.empty(buffer_size, dtype=dtype)
+    temperature_term = (
+        np.empty(buffer_size, dtype=dtype) if hasT else None
+    )
+
     for i in range(0, n, chunksize):
         chunk_size = min(chunksize, n - i)
-        chunk = data.iloc[i:i + chunk_size]
-        chunk_xyz = chunk[list(_XYZ_COLUMNS)].to_numpy(
-            dtype=calculation_dtype,
-            na_value=np.nan,
-        )
-        chunk_xyz = best_intercept + best_slope * chunk_xyz
-        if hasT:
-            chunk_T = chunk['temperature'].to_numpy()
-            chunk_xyz = chunk_xyz + best_slopeT * chunk_T[:, None]
-        _write_xyz(result, result_xyz, xyz_positions, i, chunk_xyz)
+        stop = i + chunk_size
+        chunk_calibrated = calibrated[:chunk_size]
+        chunk_temperature = None
+        if temperature is not None:
+            chunk_temperature = temperature.iloc[i:stop].to_numpy(
+                dtype=dtype,
+                na_value=np.nan,
+                copy=False,
+            )
+        for axis, source in enumerate(source_xyz):
+            source_chunk = source[i:stop]
+            _multiply_in_output_dtype(
+                source_chunk,
+                best_slope[axis],
+                chunk_calibrated,
+            )
+            np.add(
+                chunk_calibrated,
+                best_intercept[axis],
+                out=chunk_calibrated,
+            )
+            if chunk_temperature is not None and temperature_term is not None:
+                chunk_temperature_term = temperature_term[:chunk_size]
+                _multiply_in_output_dtype(
+                    chunk_temperature,
+                    best_slopeT[axis],
+                    chunk_temperature_term,
+                )
+                np.add(
+                    chunk_calibrated,
+                    chunk_temperature_term,
+                    out=chunk_calibrated,
+                )
+
+            output = result_xyz[axis]
+            if xyz_positions is None:
+                output[i:stop] = chunk_calibrated
+            else:
+                result.iloc[i:stop, xyz_positions[axis]] = (
+                    chunk_calibrated.astype(output.dtype, copy=False)
+                )
 
     data = result
     info['CalibOK'] = 1
