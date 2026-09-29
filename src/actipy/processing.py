@@ -425,6 +425,12 @@ def _window_statistics(
         len(columns), np.nan, dtype=np.float64
     )
     column_series = tuple(data[column] for column in columns)
+    column_arrays: Tuple[Optional[Array], ...] = tuple(
+        None
+        if isinstance(series.dtype, pd.api.extensions.ExtensionDtype)
+        else series.to_numpy(copy=False)
+        for series in column_series
+    )
 
     for start in range(0, len(data), chunksize):
         stop = min(start + chunksize, len(data))
@@ -434,12 +440,17 @@ def _window_statistics(
         bins: Array = ((times_ns - origin_ns) // width_ns).astype(
             np.intp, copy=False
         )
-        for column_number, series in enumerate(column_series):
-            values = series.iloc[start:stop].to_numpy(
-                dtype=np.float64,
-                na_value=np.nan,
-                copy=False,
-            )
+        for column_number, (series, column_values) in enumerate(
+            zip(column_series, column_arrays)
+        ):
+            if column_values is None:
+                values = series.iloc[start:stop].to_numpy(
+                    dtype=np.float64,
+                    na_value=np.nan,
+                    copy=False,
+                )
+            else:
+                values = column_values[start:stop]
             if forward_fill:
                 values, previous[column_number] = _forward_fill(
                     values, previous[column_number]
@@ -448,7 +459,7 @@ def _window_statistics(
             if not valid.any():
                 continue
             selected_bins = bins[valid]
-            selected = values[valid]
+            selected = values[valid].astype(np.float64, copy=False)
             first_bin = int(selected_bins[0])
             last_bin = int(selected_bins[-1]) + 1
             selected_bins -= first_bin
