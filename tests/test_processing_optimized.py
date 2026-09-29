@@ -118,6 +118,61 @@ def test_window_statistics_match_pandas_across_chunk_boundaries():
     )
 
 
+@pytest.mark.parametrize("dtype", ["Float32", "Float64"])
+def test_window_statistics_converts_nullable_columns_in_chunks(
+    monkeypatch,
+    dtype,
+):
+    index = pd.date_range("2024-01-01", periods=20, freq="1s")
+    values = np.arange(40, dtype=np.float64).reshape(20, 2)
+    values[[0, 4, 9, 15], 0] = np.nan
+    values[[2, 7, 12, 19], 1] = np.nan
+    data = pd.DataFrame(
+        {
+            column: pd.array(values[:, axis], dtype=dtype)
+            for axis, column in enumerate(("x", "y"))
+        },
+        index=index,
+    )
+    expected = data.ffill().resample("3s", origin="start")
+    expected_means = expected.mean().to_numpy(
+        dtype=np.float64,
+        na_value=np.nan,
+    )
+    expected_deviations = expected.std().to_numpy(
+        dtype=np.float64,
+        na_value=np.nan,
+    )
+    original_to_numpy = pd.Series.to_numpy
+    conversions = []
+
+    def tracked_to_numpy(series, *args, **kwargs):
+        if series.name in data.columns:
+            conversions.append((len(series), kwargs))
+        return original_to_numpy(series, *args, **kwargs)
+
+    monkeypatch.setattr(pd.Series, "to_numpy", tracked_to_numpy)
+
+    means, deviations, _ = P._window_statistics(
+        data,
+        tuple(data.columns),
+        "3s",
+        forward_fill=True,
+        chunksize=4,
+    )
+
+    assert conversions
+    assert max(length for length, _ in conversions) <= 4
+    assert all(options["dtype"] == np.float64 for _, options in conversions)
+    assert all(np.isnan(options["na_value"]) for _, options in conversions)
+    np.testing.assert_allclose(means, expected_means, equal_nan=True)
+    np.testing.assert_allclose(
+        deviations,
+        expected_deviations,
+        equal_nan=True,
+    )
+
+
 def test_timestamp_arithmetic_supports_all_datetime_resolutions():
     ticks_per_second = {
         "s": 1,

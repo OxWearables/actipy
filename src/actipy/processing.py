@@ -424,9 +424,7 @@ def _window_statistics(
     previous: NDArray[np.float64] = np.full(
         len(columns), np.nan, dtype=np.float64
     )
-    column_arrays = tuple(
-        data[column].to_numpy(copy=False) for column in columns
-    )
+    column_series = tuple(data[column] for column in columns)
 
     for start in range(0, len(data), chunksize):
         stop = min(start + chunksize, len(data))
@@ -436,8 +434,12 @@ def _window_statistics(
         bins: Array = ((times_ns - origin_ns) // width_ns).astype(
             np.intp, copy=False
         )
-        for column_number, column_values in enumerate(column_arrays):
-            values = column_values[start:stop]
+        for column_number, series in enumerate(column_series):
+            values = series.iloc[start:stop].to_numpy(
+                dtype=np.float64,
+                na_value=np.nan,
+                copy=False,
+            )
             if forward_fill:
                 values, previous[column_number] = _forward_fill(
                     values, previous[column_number]
@@ -446,7 +448,7 @@ def _window_statistics(
             if not valid.any():
                 continue
             selected_bins = bins[valid]
-            selected = values[valid].astype(np.float64, copy=False)
+            selected = values[valid]
             first_bin = int(selected_bins[0])
             last_bin = int(selected_bins[-1]) + 1
             selected_bins -= first_bin
