@@ -279,10 +279,14 @@ def _prepare_xyz_output(
         if not pd.api.types.is_float_dtype(result[column].dtype):
             result[column] = result[column].astype(calculation_dtype)
 
+    series = tuple(result[column] for column in _XYZ_COLUMNS)
     arrays = tuple(
-        result[column].to_numpy(copy=False) for column in _XYZ_COLUMNS
+        np.empty(0, dtype=_column_numpy_dtype(result, column))
+        if isinstance(values.dtype, pd.api.extensions.ExtensionDtype)
+        else values.to_numpy(copy=False)
+        for column, values in zip(_XYZ_COLUMNS, series)
     )
-    storage = tuple(result[column].values for column in _XYZ_COLUMNS)
+    storage = tuple(values.values for values in series)
     positions = None
     if not all(
         isinstance(backing, np.ndarray)
@@ -973,7 +977,13 @@ def calibrate_gravity(  # noqa: C901
         data, _inplace, dtype
     )
     n = len(data)
-    source_xyz = result_xyz
+    source_series = tuple(result[column] for column in _XYZ_COLUMNS)
+    source_xyz: Tuple[Optional[Array], ...] = tuple(
+        None
+        if isinstance(series.dtype, pd.api.extensions.ExtensionDtype)
+        else output
+        for series, output in zip(source_series, result_xyz)
+    )
     temperature = result['temperature'] if hasT else None
     best_intercept = best_intercept.astype(dtype, copy=False)
     best_slope = best_slope.astype(dtype, copy=False)
@@ -996,8 +1006,17 @@ def calibrate_gravity(  # noqa: C901
                 na_value=np.nan,
                 copy=False,
             )
-        for axis, source in enumerate(source_xyz):
-            source_chunk = source[i:stop]
+        for axis, (series, source) in enumerate(
+            zip(source_series, source_xyz)
+        ):
+            if source is None:
+                source_chunk = series.iloc[i:stop].to_numpy(
+                    dtype=dtype,
+                    na_value=np.nan,
+                    copy=False,
+                )
+            else:
+                source_chunk = source[i:stop]
             _multiply_in_output_dtype(
                 source_chunk,
                 best_slope[axis],

@@ -543,7 +543,7 @@ def test_calibration_uses_caller_precision(
 
 
 @pytest.mark.parametrize("inplace", [False, True])
-def test_nullable_calibration_converts_temperature_in_chunks(
+def test_nullable_calibration_converts_inputs_in_chunks(
     monkeypatch,
     inplace,
 ):
@@ -576,9 +576,8 @@ def test_nullable_calibration_converts_temperature_in_chunks(
 
     def tracked_prepare(*args, **kwargs):
         nonlocal application_started
-        prepared = original_prepare(*args, **kwargs)
         application_started = True
-        return prepared
+        return original_prepare(*args, **kwargs)
 
     def tracked_to_numpy(series, *args, **kwargs):
         if application_started and series.name in (*P._XYZ_COLUMNS, "temperature"):
@@ -601,7 +600,12 @@ def test_nullable_calibration_converts_temperature_in_chunks(
     assert all(str(result[column].dtype) == "Float32" for column in data.columns)
     assert result.iloc[:10].isna().all(axis=None)
     assert application_conversions
-    assert {name for name, _ in application_conversions} == {"temperature"}
+    assert {name for name, _ in application_conversions} == {
+        "x",
+        "y",
+        "z",
+        "temperature",
+    }
     assert max(length for _, length in application_conversions) <= 37
 
 
