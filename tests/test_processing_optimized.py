@@ -118,6 +118,61 @@ def test_window_statistics_match_pandas_across_chunk_boundaries():
     )
 
 
+@pytest.mark.parametrize("dtype", ["Float32", "Float64"])
+def test_window_statistics_converts_nullable_columns_in_chunks(
+    monkeypatch,
+    dtype,
+):
+    index = pd.date_range("2024-01-01", periods=20, freq="1s")
+    values = np.arange(40, dtype=np.float64).reshape(20, 2)
+    values[[0, 4, 9, 15], 0] = np.nan
+    values[[2, 7, 12, 19], 1] = np.nan
+    data = pd.DataFrame(
+        {
+            column: pd.array(values[:, axis], dtype=dtype)
+            for axis, column in enumerate(("x", "y"))
+        },
+        index=index,
+    )
+    expected = data.ffill().resample("3s", origin="start")
+    expected_means = expected.mean().to_numpy(
+        dtype=np.float64,
+        na_value=np.nan,
+    )
+    expected_deviations = expected.std().to_numpy(
+        dtype=np.float64,
+        na_value=np.nan,
+    )
+    original_to_numpy = pd.Series.to_numpy
+    conversions = []
+
+    def tracked_to_numpy(series, *args, **kwargs):
+        if series.name in data.columns:
+            conversions.append((len(series), kwargs))
+        return original_to_numpy(series, *args, **kwargs)
+
+    monkeypatch.setattr(pd.Series, "to_numpy", tracked_to_numpy)
+
+    means, deviations, _ = P._window_statistics(
+        data,
+        tuple(data.columns),
+        "3s",
+        forward_fill=True,
+        chunksize=4,
+    )
+
+    assert conversions
+    assert max(length for length, _ in conversions) <= 4
+    assert all(options["dtype"] == np.float64 for _, options in conversions)
+    assert all(np.isnan(options["na_value"]) for _, options in conversions)
+    np.testing.assert_allclose(means, expected_means, equal_nan=True)
+    np.testing.assert_allclose(
+        deviations,
+        expected_deviations,
+        equal_nan=True,
+    )
+
+
 def test_timestamp_arithmetic_supports_all_datetime_resolutions():
     ticks_per_second = {
         "s": 1,
@@ -266,6 +321,40 @@ def test_calibration_statistics_do_not_truncate_integer_inputs():
     assert integer_info["CalibNumSamples"] == float_info["CalibNumSamples"] == 0
 
 
+def test_calibration_uses_only_first_100000_stationary_points(monkeypatch):
+    directions = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, -1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, -1.0],
+        ]
+    )
+    means = np.resize(directions, (P._MAX_CALIBRATION_SAMPLES + 1, 3))
+    means[-1] = 100.0
+    deviations = np.zeros_like(means)
+
+    def stationary_statistics(*args, **kwargs):
+        return means, deviations, pd.Timedelta("10s").value
+
+    monkeypatch.setattr(P, "_window_statistics", stationary_statistics)
+    data = pd.DataFrame(
+        [[0.0, 0.0, 1.0]],
+        columns=["x", "y", "z"],
+        index=pd.date_range("2024-01-01", periods=1, freq="1s"),
+    )
+
+    result, info = P.calibrate_gravity(data)
+
+    assert result is data
+    assert info["CalibNumSamples"] == 100_000
+    assert info["CalibErrorBefore(mg)"] == 0
+    assert info["CalibNumIters"] == 0
+    assert info["CalibOK"] == 1
+
+
 def test_xyz_fallback_assignment_preserves_float32_storage():
     result = pd.DataFrame(
         np.zeros((3, 3), dtype=np.float32), columns=["x", "y", "z"]
@@ -372,6 +461,152 @@ def test_inplace_calibration_matches_nonmutating_path_across_chunks():
     assert info == expected_info
     pd.testing.assert_frame_equal(result, expected)
     assert not result.equals(data)
+
+
+@pytest.mark.parametrize(
+    ("xyz_dtype", "temperature_dtype", "dtype"),
+    [
+        (np.float32, np.float32, np.float32),
+        (np.float64, np.float64, np.float64),
+        (np.float32, np.float64, np.float64),
+    ],
+)
+def test_calibration_uses_caller_precision(
+    xyz_dtype,
+    temperature_dtype,
+    dtype,
+):
+    rng = np.random.default_rng(81)
+    targets = rng.normal(size=(120, 3))
+    targets /= np.linalg.norm(targets, axis=1, keepdims=True)
+    temperature = np.linspace(18.0, 28.0, len(targets))
+    intercept = np.array([0.04, -0.03, 0.02])
+    slope = np.array([1.08, 0.94, 1.05])
+    temperature_slope = np.array([0.001, -0.002, 0.0015])
+    raw = (
+        targets
+        - intercept
+        - temperature[:, None] * temperature_slope
+    ) / slope
+    values = np.repeat(raw, 10, axis=0).astype(xyz_dtype)
+    temperatures = np.repeat(temperature, 10).astype(temperature_dtype)
+    if xyz_dtype == np.float64:
+        values[0, 0] = 1e39
+    index = pd.date_range("2024-01-01", periods=len(values), freq="1s")
+    data = pd.DataFrame(values, index=index, columns=["x", "y", "z"])
+    data["temperature"] = temperatures
+
+    result, info = P.calibrate_gravity(
+        data,
+        calib_min_samples=50,
+        window="10s",
+        chunksize=37,
+    )
+
+    assert info["CalibOK"] == 1
+    expected = values.astype(dtype)
+    expected_temperature = temperatures.astype(dtype)
+    for axis, name in enumerate(("x", "y", "z")):
+        np.multiply(
+            expected[:, axis],
+            dtype(info[f"Calib{name}Slope"]),
+            out=expected[:, axis],
+        )
+        np.add(
+            expected[:, axis],
+            dtype(info[f"Calib{name}Intercept"]),
+            out=expected[:, axis],
+        )
+        temperature_term = np.multiply(
+            expected_temperature,
+            dtype(info[f"Calib{name}SlopeT"]),
+        )
+        np.add(
+            expected[:, axis],
+            temperature_term,
+            out=expected[:, axis],
+        )
+
+    assert all(result[column].dtype == xyz_dtype for column in ("x", "y", "z"))
+    assert all(
+        np.asarray(info[f"Calib{name}{coefficient}"]).dtype
+        == np.dtype(dtype)
+        for name in ("x", "y", "z")
+        for coefficient in ("Intercept", "Slope", "SlopeT")
+    )
+    np.testing.assert_array_equal(
+        result[["x", "y", "z"]].to_numpy(),
+        expected.astype(xyz_dtype),
+    )
+    if xyz_dtype == np.float64:
+        assert np.isfinite(result.iloc[0]["x"])
+
+
+@pytest.mark.parametrize("inplace", [False, True])
+def test_nullable_calibration_converts_inputs_in_chunks(
+    monkeypatch,
+    inplace,
+):
+    rng = np.random.default_rng(83)
+    targets = rng.normal(size=(120, 3))
+    targets /= np.linalg.norm(targets, axis=1, keepdims=True)
+    temperature = np.linspace(18.0, 28.0, len(targets))
+    raw = (
+        targets
+        - np.array([0.04, -0.03, 0.02])
+        - temperature[:, None] * np.array([0.001, -0.002, 0.0015])
+    ) / np.array([1.08, 0.94, 1.05])
+    values = np.repeat(raw, 10, axis=0).astype(np.float32)
+    temperatures = np.repeat(temperature, 10).astype(np.float32)
+    index = pd.date_range("2024-01-01", periods=len(values), freq="1s")
+    data = pd.DataFrame(
+        {
+            column: pd.array(values[:, axis], dtype="Float32")
+            for axis, column in enumerate(("x", "y", "z"))
+        },
+        index=index,
+    )
+    data["temperature"] = pd.array(temperatures, dtype="Float32")
+    data.iloc[:10] = pd.NA
+
+    original_prepare = P._prepare_xyz_output
+    original_to_numpy = pd.Series.to_numpy
+    application_started = False
+    application_conversions = []
+
+    def tracked_prepare(*args, **kwargs):
+        nonlocal application_started
+        application_started = True
+        return original_prepare(*args, **kwargs)
+
+    def tracked_to_numpy(series, *args, **kwargs):
+        if application_started and series.name in (*P._XYZ_COLUMNS, "temperature"):
+            application_conversions.append((series.name, len(series)))
+        return original_to_numpy(series, *args, **kwargs)
+
+    monkeypatch.setattr(P, "_prepare_xyz_output", tracked_prepare)
+    monkeypatch.setattr(pd.Series, "to_numpy", tracked_to_numpy)
+
+    result, info = P.calibrate_gravity(
+        data,
+        calib_cube=0,
+        calib_min_samples=50,
+        window="10s",
+        chunksize=37,
+        _inplace=inplace,
+    )
+
+    assert info["CalibOK"] == 1
+    assert all(str(result[column].dtype) == "Float32" for column in data.columns)
+    assert result.iloc[:10].isna().all(axis=None)
+    assert application_conversions
+    assert {name for name, _ in application_conversions} == {
+        "x",
+        "y",
+        "z",
+        "temperature",
+    }
+    assert max(length for _, length in application_conversions) <= 37
 
 
 def test_inplace_nonwear_matches_nonmutating_path_when_episode_detected():
