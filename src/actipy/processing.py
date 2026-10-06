@@ -75,7 +75,7 @@ def _timestamp_to_ns(value: int, scale: int) -> int:
 
     if scale == 1:
         return value
-    limits: Any = np.iinfo(np.int64)
+    limits: np.iinfo[np.int64] = np.iinfo(np.int64)
     lower = limits.min // scale + 1
     upper = limits.max // scale
     if value < lower or value > upper:
@@ -813,7 +813,7 @@ def calibrate_gravity(  # noqa: C901
     window: str = '10s',
     stdtol: float = 15 / 1000,
     stdtol_min: Optional[float] = None,
-    return_coeffs: bool = True,
+    return_coeffs: bool = False,
     chunksize: int = 1_000_000,
     _inplace: bool = False,
 ) -> Tuple[pd.DataFrame, Info]:
@@ -833,6 +833,9 @@ def calibrate_gravity(  # noqa: C901
     :type stdtol: float, optional
     :param stdtol_min: Minimum standard deviation above which a window is considered valid. Defaults to None (no filtering).
     :type stdtol_min: float, optional
+    :param return_coeffs: Whether to include calibration coefficients in the
+        processing metadata. Defaults to False.
+    :type return_coeffs: bool, optional
     :param chunksize: Chunk size for chunked processing. Defaults to 1_000_000 rows.
     :type chunksize: int, optional
     :return: Processed data and processing info.
@@ -933,8 +936,14 @@ def calibrate_gravity(  # noqa: C901
             out = target[:, k]
             if hasT:
                 inp = np.column_stack((inp, T))
-            inp = sm.add_constant(inp, prepend=True, has_constant='add')
-            params = sm.WLS(out, inp, weights=weights).fit().params
+            inp = cast(
+                Array,
+                sm.add_constant(inp, prepend=True, has_constant='add'),
+            )
+            params = cast(
+                NDArray[np.float64],
+                sm.WLS(out, inp, weights=weights).fit().params,
+            )
             # In the following,
             # intercept == params[0]
             # slope == params[1]
@@ -1153,11 +1162,14 @@ def butterfilt(
     else:
         btype = 'lowpass'
         Wn = cutoffs / nyq
-    sos = signal.butter(order, Wn, btype=btype, analog=False, output='sos')
-    y = signal.sosfiltfilt(sos, x, axis=axis)
+    sos = cast(
+        Array,
+        signal.butter(order, Wn, btype=btype, analog=False, output='sos'),
+    )
+    y = cast(Array, signal.sosfiltfilt(sos, x, axis=axis))
     y = y.astype(x.dtype, copy=False)
 
-    return cast(Array, y)
+    return y
 
 
 def chunker(

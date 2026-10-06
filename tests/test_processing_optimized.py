@@ -457,6 +457,7 @@ def test_inplace_calibration_matches_nonmutating_path_across_chunks():
 
     assert expected_info["CalibOK"] == 1
     assert expected_info["CalibNumIters"] > 0
+    assert "CalibxIntercept" not in expected_info
     assert result is inplace_input
     assert info == expected_info
     pd.testing.assert_frame_equal(result, expected)
@@ -500,6 +501,7 @@ def test_calibration_uses_caller_precision(
         data,
         calib_min_samples=50,
         window="10s",
+        return_coeffs=True,
         chunksize=37,
     )
 
