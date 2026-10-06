@@ -49,6 +49,7 @@ from typing import (
     Literal,
     Optional,
     Tuple,
+    TypedDict,
     Union,
     cast,
 )
@@ -60,13 +61,35 @@ from numpy.typing import NDArray
 from actipy import matrix_reader
 from actipy import processing as P
 
-__all__ = ['read_device', 'process']
+__all__ = [
+    'read_device',
+    'process',
+    'CalibrateGravityOptions',
+    'FlagNonwearOptions',
+]
 
 Info = Dict[str, Any]
 Frequency = Optional[Union[int, float, bool]]
 ResampleFrequency = Optional[Union[Literal['uniform'], int, float, bool]]
 Timestamp = Optional[Union[str, datetime]]
 StreamColumns = Dict[str, NDArray[Any]]
+
+
+class CalibrateGravityOptions(TypedDict, total=False):
+    calib_cube: float
+    calib_min_samples: int
+    window: str
+    stdtol: float
+    stdtol_min: Optional[float]
+    chunksize: int
+    return_coeffs: bool
+
+
+class FlagNonwearOptions(TypedDict, total=False):
+    patience: str
+    window: str
+    stdtol: float
+
 
 _JAVA_STREAM_MAGIC = b'ACTIPY01'
 _JAVA_STREAM_ROWS_PER_CHUNK = 8192
@@ -112,8 +135,8 @@ def read_device(input_file: str,
                 skipdays: int = 0,
                 cutdays: int = 0,
                 start_first_complete_minute: bool = False,
-                calibrate_gravity_kwargs: Optional[Dict[str, Any]] = None,
-                flag_nonwear_kwargs: Optional[Dict[str, Any]] = None,
+                calibrate_gravity_kwargs: Optional[CalibrateGravityOptions] = None,
+                flag_nonwear_kwargs: Optional[FlagNonwearOptions] = None,
                 verbose: bool = True) -> Tuple[pd.DataFrame, Info]:
     """
     Read and process accelerometer device file.
@@ -229,6 +252,8 @@ def read_device(input_file: str,
     timer = Timer(verbose)
 
     data, info = _read_device(input_file, verbose)
+    sample_rate = cast(float, info['SampleRate'])
+    read_errors = cast(int, info['ReadErrors'])
 
     if start_time is not None:
         data = data.loc[cast(Any, start_time):]
@@ -248,8 +273,10 @@ def read_device(input_file: str,
     # memory. So instead we just do everything here.
 
     timer.start("Quality control...")
-    data, info_qc = P.quality_control(data, info['SampleRate'])
-    info_qc['ReadErrors'] += info['ReadErrors']
+    data, info_qc = P.quality_control(data, sample_rate)
+    info_qc['ReadErrors'] = (
+        cast(int, info_qc['ReadErrors']) + read_errors
+    )
     info.update(info_qc)
     timer.stop()
 
@@ -261,7 +288,7 @@ def read_device(input_file: str,
         timer.start("Lowpass filter...")
         data, info_lowpass = P.lowpass(
             data,
-            info['SampleRate'],
+            sample_rate,
             cast(float, lowpass_hz),
             _inplace=True,
         )
@@ -270,16 +297,16 @@ def read_device(input_file: str,
 
     if calibrate_gravity:
         timer.start("Gravity calibration...")
-        calib_kwargs = calibrate_gravity_kwargs or {}
+        calib_kwargs: CalibrateGravityOptions = calibrate_gravity_kwargs or {}
         data, info_calib = P.calibrate_gravity(
-            data, return_coeffs=False, _inplace=True, **calib_kwargs
+            data, _inplace=True, **calib_kwargs
         )
         info.update(info_calib)
         timer.stop()
 
     if detect_nonwear:
         timer.start("Nonwear detection...")
-        nonwear_kwargs = flag_nonwear_kwargs or {}
+        nonwear_kwargs: FlagNonwearOptions = flag_nonwear_kwargs or {}
         data, info_nonwear = P.flag_nonwear(data, _inplace=True, **nonwear_kwargs)
         info.update(info_nonwear)
         timer.stop()
@@ -287,7 +314,7 @@ def read_device(input_file: str,
     if resample_hz is not None and resample_hz is not False:
         timer.start("Resampling...")
         if resample_hz == 'uniform' or resample_hz is True:
-            data, info_resample = P.resample(data, info['SampleRate'], start_first_complete_minute=start_first_complete_minute)
+            data, info_resample = P.resample(data, sample_rate, start_first_complete_minute=start_first_complete_minute)
         else:
             data, info_resample = P.resample(data, cast(float, resample_hz), start_first_complete_minute=start_first_complete_minute)
         info.update(info_resample)
@@ -302,8 +329,8 @@ def process(data: pd.DataFrame, sample_rate: float,
             detect_nonwear: bool = True,
             resample_hz: ResampleFrequency = 'uniform',
             start_first_complete_minute: bool = False,
-            calibrate_gravity_kwargs: Optional[Dict[str, Any]] = None,
-            flag_nonwear_kwargs: Optional[Dict[str, Any]] = None,
+            calibrate_gravity_kwargs: Optional[CalibrateGravityOptions] = None,
+            flag_nonwear_kwargs: Optional[FlagNonwearOptions] = None,
             verbose: bool = True) -> Tuple[pd.DataFrame, Info]:
     """
     Apply processing pipeline to acceleration time-series DataFrame.
@@ -394,14 +421,16 @@ def process(data: pd.DataFrame, sample_rate: float,
 
     if calibrate_gravity:
         timer.start("Gravity calibration...")
-        calib_kwargs = calibrate_gravity_kwargs or {}
+        calib_kwargs: CalibrateGravityOptions = (
+            calibrate_gravity_kwargs or {}
+        )
         data, info_calib = P.calibrate_gravity(data, **calib_kwargs)
         info.update(info_calib)
         timer.stop()
 
     if detect_nonwear:
         timer.start("Nonwear detection...")
-        nonwear_kwargs = flag_nonwear_kwargs or {}
+        nonwear_kwargs: FlagNonwearOptions = flag_nonwear_kwargs or {}
         data, info_nonwear = P.flag_nonwear(data, **nonwear_kwargs)
         info.update(info_nonwear)
         timer.stop()

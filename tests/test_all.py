@@ -164,7 +164,13 @@ def test_calibrate_gravity():
 
     data, info = read_device()
     # Use a bad calibration cube to force calibration
-    data, info_calib = P.calibrate_gravity(data, calib_cube=0, calib_min_samples=1, chunksize=10_000)
+    data, info_calib = P.calibrate_gravity(
+        data,
+        calib_cube=0,
+        calib_min_samples=1,
+        return_coeffs=True,
+        chunksize=10_000,
+    )
 
     info_calib_ref = {
         'CalibErrorBefore(mg)': 33.75431150197983,
