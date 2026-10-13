@@ -1,17 +1,15 @@
 import hashlib
 import json
-import shutil
-import subprocess
+import logging
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 import actipy
-from actipy import reader
+from actipy import axivity_reader
 
 PROJECT_ROOT = Path(__file__).parents[1]
-SOURCE_DIR = PROJECT_ROOT / "src" / "actipy"
 FIXTURE_DIR = PROJECT_ROOT / "tests" / "data" / "parser-fixtures"
 MANIFEST = json.loads((FIXTURE_DIR / "manifest.json").read_text())
 SUSTAINED_FIXTURES = {
@@ -28,35 +26,6 @@ SUSTAINED_FIXTURES = {
     "geneactiv-middle.bin",
     "geneactiv-end.bin",
 }
-
-
-@pytest.fixture(scope="session")
-def compiled_java_readers(tmp_path_factory):
-    java = shutil.which("java")
-    javac = shutil.which("javac")
-    missing = [
-        command
-        for command, executable in (("java", java), ("javac", javac))
-        if executable is None
-    ]
-    if missing:
-        pytest.skip("Java toolchain unavailable: missing " + ", ".join(missing))
-
-    classes = tmp_path_factory.mktemp("real-parser-reader-classes")
-    subprocess.run(
-        [
-            javac,
-            "-d",
-            str(classes),
-            str(SOURCE_DIR / "NpyWriter.java"),
-            str(SOURCE_DIR / "ReaderSupport.java"),
-            str(SOURCE_DIR / "ActigraphReader.java"),
-            str(SOURCE_DIR / "AxivityReader.java"),
-            str(SOURCE_DIR / "GENEActivReader.java"),
-        ],
-        check=True,
-    )
-    return classes
 
 
 def _sha256(path):
@@ -86,18 +55,12 @@ def test_real_device_fixtures_cover_sustained_windows():
     MANIFEST["fixtures"],
     ids=lambda spec: spec["fixture"],
 )
-def test_real_device_numerical_regression(
-        fixture_spec, compiled_java_readers, monkeypatch):
+def test_real_device_numerical_regression(fixture_spec):
     fixture_path = FIXTURE_DIR / fixture_spec["fixture"]
     expected_path = FIXTURE_DIR / fixture_spec["expected"]
 
     assert _sha256(fixture_path) == fixture_spec["fixture_sha256"]
     assert _sha256(expected_path) == fixture_spec["expected_sha256"]
-    # java_read_device derives its classpath from reader.__file__; point it at
-    # these test-built classes to avoid using stale packaged bytecode.
-    monkeypatch.setattr(
-        reader, "__file__", str(compiled_java_readers / "reader.py")
-    )
     data, info = actipy.read_device(
         str(fixture_path),
         lowpass_hz=None,
@@ -128,8 +91,7 @@ def test_real_device_numerical_regression(
     assert info["SampleRate"] == fixture_spec["sample_rate"]
 
 
-def test_java_read_device_returns_data_before_truncated_axivity_tail(
-        compiled_java_readers, monkeypatch, tmp_path):
+def test_axivity_reader_returns_data_before_truncated_tail(tmp_path, caplog):
     source = FIXTURE_DIR / "axivity-ax3.cwa"
     input_file = tmp_path / "truncated-tail.cwa"
     source_bytes = source.read_bytes()
@@ -139,17 +101,11 @@ def test_java_read_device_returns_data_before_truncated_axivity_tail(
         if source_bytes[offset:offset + 2] == b"AX"
     )
     input_file.write_bytes(data_block + b"AX")
-    output_dir = tmp_path / "output"
-    output_dir.mkdir()
-    monkeypatch.setattr(
-        reader, "__file__", str(compiled_java_readers / "reader.py")
-    )
 
-    info = reader.java_read_device(
-        str(input_file), str(output_dir), verbose=False
-    )
+    with caplog.at_level(logging.WARNING, logger="actipy"):
+        data, info = axivity_reader.read(str(input_file))
 
-    data = np.load(output_dir / "data.npy")
-    assert len(data) > 0
+    assert "Unexpected partial CWA block" in caplog.text
+    assert len(data["time"]) > 0
     assert info["ReadOK"] == 1
     assert info["ReadErrors"] == 1

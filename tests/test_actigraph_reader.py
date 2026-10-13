@@ -1,69 +1,23 @@
+import logging
 import operator
-import shutil
 import struct
-import subprocess
+import warnings
 import zipfile
 from functools import reduce
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-PROJECT_ROOT = Path(__file__).parents[1]
-SOURCE_DIR = PROJECT_ROOT / "src" / "actipy"
+from actipy import actigraph_reader as actigraph
+from actipy._reader_support import FormatError
 
 
-@pytest.fixture(scope="session")
-def actigraph_reader(tmp_path_factory):
-    java = shutil.which("java")
-    javac = shutil.which("javac")
-    if java is None or javac is None:
-        missing = [
-            command
-            for command, executable in (("java", java), ("javac", javac))
-            if executable is None
-        ]
-        pytest.skip("Java toolchain unavailable: missing " + ", ".join(missing))
-
-    classes = tmp_path_factory.mktemp("actigraph-reader-classes")
-    subprocess.run(
-        [
-            javac,
-            "-d",
-            str(classes),
-            str(SOURCE_DIR / "NpyWriter.java"),
-            str(SOURCE_DIR / "ReaderSupport.java"),
-            str(SOURCE_DIR / "ActigraphReader.java"),
-        ],
-        check=True,
-    )
-
-    def run(input_file, output_dir, check=True):
-        output_dir.mkdir(exist_ok=True)
-        return subprocess.run(
-            [
-                java,
-                "-cp",
-                str(classes),
-                "ActigraphReader",
-                "-i",
-                str(input_file),
-                "-o",
-                str(output_dir),
-            ],
-            check=check,
-            capture_output=True,
-            text=True,
-        )
+@pytest.fixture
+def actigraph_reader():
+    def run(input_file):
+        return actigraph.read(str(input_file))
 
     return run
-
-
-def _read_info(output_dir):
-    return dict(
-        line.split(":", 1)
-        for line in (output_dir / "info.txt").read_text().splitlines()
-    )
 
 
 def _actigraph_packet(timestamp, payload, record_type=26, sync_byte=0x1E):
@@ -124,7 +78,6 @@ def _write_gt3x_v1(path, metadata, payload):
 def test_actigraph_reader_decodes_v2_samples_and_timestamps(
         actigraph_reader, tmp_path):
     input_file = tmp_path / "sample-v2.gt3x"
-    output_dir = tmp_path / "output"
     timestamp = 1_700_000_000
     payload = struct.pack("<hhhhhh", 256, -256, 128, -512, 64, -128)
     _write_gt3x_v2(
@@ -133,10 +86,8 @@ def test_actigraph_reader_decodes_v2_samples_and_timestamps(
         [_actigraph_packet(timestamp, payload)],
     )
 
-    actigraph_reader(input_file, output_dir)
-
-    data = np.load(output_dir / "data.npy")
-    assert data.dtype.names == ("time", "x", "y", "z")
+    data, info = actigraph_reader(input_file)
+    assert tuple(data) == ("time", "x", "y", "z")
     np.testing.assert_array_equal(
         data["time"].view("int64"),
         [timestamp * 1_000_000_000, timestamp * 1_000_000_000 + 250_000_000],
@@ -145,10 +96,10 @@ def test_actigraph_reader_decodes_v2_samples_and_timestamps(
         np.column_stack((data["x"], data["y"], data["z"])),
         [[1.0, -1.0, 0.5], [-2.0, 0.25, -0.5]],
     )
-    assert _read_info(output_dir) == {
-        "ReadOK": "1",
-        "ReadErrors": "0",
-        "SampleRate": "4.0",
+    assert info == {
+        "ReadOK": 1,
+        "ReadErrors": 0,
+        "SampleRate": 4.0,
     }
 
 
@@ -156,7 +107,6 @@ def test_actigraph_reader_decodes_v2_samples_and_timestamps(
 def test_actigraph_reader_ignores_one_byte_usb_activity_records(
         actigraph_reader, tmp_path, usb_record_type):
     input_file = tmp_path / "usb-event.gt3x"
-    output_dir = tmp_path / "output"
     timestamp = 1_700_000_000
     _write_gt3x_v2(
         input_file,
@@ -170,9 +120,7 @@ def test_actigraph_reader_ignores_one_byte_usb_activity_records(
         ],
     )
 
-    actigraph_reader(input_file, output_dir)
-
-    data = np.load(output_dir / "data.npy")
+    data, info = actigraph_reader(input_file)
     np.testing.assert_array_equal(
         data["time"].view("int64"),
         [(timestamp + 1) * 1_000_000_000],
@@ -181,17 +129,16 @@ def test_actigraph_reader_ignores_one_byte_usb_activity_records(
         np.column_stack((data["x"], data["y"], data["z"])),
         [[1.0, -1.0, 0.5]],
     )
-    assert _read_info(output_dir) == {
-        "ReadOK": "1",
-        "ReadErrors": "0",
-        "SampleRate": "4.0",
+    assert info == {
+        "ReadOK": 1,
+        "ReadErrors": 0,
+        "SampleRate": 4.0,
     }
 
 
 def test_actigraph_reader_preserves_java_midpoint_rounding(
         actigraph_reader, tmp_path):
     input_file = tmp_path / "rounded-v2.gt3x"
-    output_dir = tmp_path / "output"
     timestamp = 1_700_000_000
     _write_gt3x_v2(
         input_file,
@@ -199,9 +146,7 @@ def test_actigraph_reader_preserves_java_midpoint_rounding(
         [_actigraph_packet(timestamp, struct.pack("<hhh", 16, -16, 24))],
     )
 
-    actigraph_reader(input_file, output_dir)
-
-    data = np.load(output_dir / "data.npy")
+    data, info = actigraph_reader(input_file)
     # Match Java Math.round, which rounds negative half-values toward zero.
     np.testing.assert_array_equal(
         np.column_stack((data["x"], data["y"], data["z"])),
@@ -212,7 +157,6 @@ def test_actigraph_reader_preserves_java_midpoint_rounding(
 def test_actigraph_reader_decodes_v1_packed_sample_pairs(
         actigraph_reader, tmp_path):
     input_file = tmp_path / "sample-v1.gt3x"
-    output_dir = tmp_path / "output"
     start_millis = 1_700_000_000_000
     payload = _pack_12_bit_pair(
         (256, -256, 128),
@@ -224,9 +168,7 @@ def test_actigraph_reader_decodes_v1_packed_sample_pairs(
         payload,
     )
 
-    actigraph_reader(input_file, output_dir)
-
-    data = np.load(output_dir / "data.npy")
+    data, info = actigraph_reader(input_file)
     np.testing.assert_array_equal(
         data["time"].view("int64"),
         [start_millis * 1_000_000, start_millis * 1_000_000 + 250_000_000],
@@ -235,17 +177,16 @@ def test_actigraph_reader_decodes_v1_packed_sample_pairs(
         np.column_stack((data["x"], data["y"], data["z"])),
         [[1.0, -1.0, 0.5], [-2.0, 0.25, -0.5]],
     )
-    assert _read_info(output_dir) == {
-        "ReadOK": "1",
-        "ReadErrors": "0",
-        "SampleRate": "4.0",
+    assert info == {
+        "ReadOK": 1,
+        "ReadErrors": 0,
+        "SampleRate": 4.0,
     }
 
 
 def test_actigraph_reader_decodes_v1_odd_packed_sample(
         actigraph_reader, tmp_path):
     input_file = tmp_path / "odd-v1.gt3x"
-    output_dir = tmp_path / "output"
     start_millis = 1_700_000_000_000
     payload = _pack_12_bit_pair(
         (256, -256, 128),
@@ -257,20 +198,17 @@ def test_actigraph_reader_decodes_v1_odd_packed_sample(
         payload,
     )
 
-    actigraph_reader(input_file, output_dir)
-
-    data = np.load(output_dir / "data.npy")
+    data, info = actigraph_reader(input_file)
     np.testing.assert_array_equal(
         np.column_stack((data["x"], data["y"], data["z"])),
         [[1.0, -1.0, 0.5], [-2.0, 0.25, -0.5], [3.0, -3.0, 1.5]],
     )
-    assert _read_info(output_dir)["ReadErrors"] == "0"
+    assert info["ReadErrors"] == 0
 
 
 def test_actigraph_reader_preserves_unsigned_v2_timestamp(
         actigraph_reader, tmp_path):
     input_file = tmp_path / "unsigned-timestamp.gt3x"
-    output_dir = tmp_path / "output"
     timestamp = 2_200_000_000
     payload = struct.pack("<hhh", 256, 0, -256)
     _write_gt3x_v2(
@@ -279,9 +217,7 @@ def test_actigraph_reader_preserves_unsigned_v2_timestamp(
         [_actigraph_packet(timestamp, payload)],
     )
 
-    actigraph_reader(input_file, output_dir)
-
-    data = np.load(output_dir / "data.npy")
+    data, info = actigraph_reader(input_file)
     np.testing.assert_array_equal(
         data["time"].view("int64"),
         [timestamp * 1_000_000_000],
@@ -291,7 +227,6 @@ def test_actigraph_reader_preserves_unsigned_v2_timestamp(
 def test_actigraph_reader_uses_in_stream_parameter_scale(
         actigraph_reader, tmp_path):
     input_file = tmp_path / "parameter-scale.gt3x"
-    output_dir = tmp_path / "output"
     timestamp = 1_700_000_000
     encoded_scale_256 = 0x09400000
     parameter = bytes([0, 0, 55, 0]) + struct.pack("<I", encoded_scale_256)
@@ -312,9 +247,7 @@ def test_actigraph_reader_uses_in_stream_parameter_scale(
         ],
     )
 
-    actigraph_reader(input_file, output_dir)
-
-    data = np.load(output_dir / "data.npy")
+    data, info = actigraph_reader(input_file)
     np.testing.assert_array_equal(
         np.column_stack((data["x"], data["y"], data["z"])),
         [[1.0, -1.0, 0.5]],
@@ -324,7 +257,6 @@ def test_actigraph_reader_uses_in_stream_parameter_scale(
 def test_actigraph_reader_decodes_high_bit_parameter_scale_byte(
         actigraph_reader, tmp_path):
     input_file = tmp_path / "high-bit-parameter-scale.gt3x"
-    output_dir = tmp_path / "output"
     timestamp = 1_700_000_000
     encoded_scale = 0x09400080
     parameter = bytes([0, 0, 55, 0]) + struct.pack("<I", encoded_scale)
@@ -345,9 +277,7 @@ def test_actigraph_reader_decodes_high_bit_parameter_scale_byte(
         ],
     )
 
-    actigraph_reader(input_file, output_dir)
-
-    data = np.load(output_dir / "data.npy")
+    data, info = actigraph_reader(input_file)
     np.testing.assert_array_equal(
         np.column_stack((data["x"], data["y"], data["z"])),
         np.array([[127.992, -127.996, 63.998]], dtype=np.float32),
@@ -357,7 +287,6 @@ def test_actigraph_reader_decodes_high_bit_parameter_scale_byte(
 def test_actigraph_reader_decodes_v2_packed_activity(
         actigraph_reader, tmp_path):
     input_file = tmp_path / "packed-v2.gt3x"
-    output_dir = tmp_path / "output"
     timestamp = 1_700_000_000
     payload = _pack_12_bit_pair(
         (256, -256, 128),
@@ -369,9 +298,7 @@ def test_actigraph_reader_decodes_v2_packed_activity(
         [_actigraph_packet(timestamp, payload, record_type=0)],
     )
 
-    actigraph_reader(input_file, output_dir)
-
-    data = np.load(output_dir / "data.npy")
+    data, info = actigraph_reader(input_file)
     np.testing.assert_array_equal(
         data["time"].view("int64"),
         [timestamp * 1_000_000_000, timestamp * 1_000_000_000 + 250_000_000],
@@ -385,7 +312,6 @@ def test_actigraph_reader_decodes_v2_packed_activity(
 def test_actigraph_reader_decodes_v2_odd_packed_sample(
         actigraph_reader, tmp_path):
     input_file = tmp_path / "odd-packed-v2.gt3x"
-    output_dir = tmp_path / "output"
     timestamp = 1_700_000_000
     _write_gt3x_v2(
         input_file,
@@ -404,20 +330,17 @@ def test_actigraph_reader_decodes_v2_odd_packed_sample(
         ],
     )
 
-    actigraph_reader(input_file, output_dir)
-
-    data = np.load(output_dir / "data.npy")
+    data, info = actigraph_reader(input_file)
     np.testing.assert_array_equal(
         np.column_stack((data["x"], data["y"], data["z"])),
         [[1.0, -1.0, 0.5], [-2.0, 0.25, -0.5], [3.0, -3.0, 1.5]],
     )
-    assert _read_info(output_dir)["ReadErrors"] == "0"
+    assert info["ReadErrors"] == 0
 
 
 def test_actigraph_reader_reuses_payload_buffer_for_smaller_short_packet(
         actigraph_reader, tmp_path):
     input_file = tmp_path / "shrinking-payload-v2.gt3x"
-    output_dir = tmp_path / "output"
     timestamp = 1_700_000_000
     _write_gt3x_v2(
         input_file,
@@ -434,17 +357,14 @@ def test_actigraph_reader_reuses_payload_buffer_for_smaller_short_packet(
         ],
     )
 
-    actigraph_reader(input_file, output_dir)
-
-    data = np.load(output_dir / "data.npy")
+    data, info = actigraph_reader(input_file)
     np.testing.assert_array_equal(data["x"], [1.0, 2.0, 3.0])
-    assert _read_info(output_dir)["ReadErrors"] == "0"
+    assert info["ReadErrors"] == 0
 
 
 def test_actigraph_reader_rejects_wrong_packet_sync_byte(
         actigraph_reader, tmp_path):
     input_file = tmp_path / "wrong-sync.gt3x"
-    output_dir = tmp_path / "output"
     packet = _actigraph_packet(
         1_700_000_000,
         struct.pack("<hhh", 256, 0, 0),
@@ -456,18 +376,13 @@ def test_actigraph_reader_rejects_wrong_packet_sync_byte(
         [packet],
     )
 
-    result = actigraph_reader(input_file, output_dir, check=False)
-
-    assert result.returncode != 0
-    assert "Invalid GT3X packet synchronization byte" in result.stderr
-    assert np.load(output_dir / "data.npy").shape == (0,)
-    assert _read_info(output_dir)["ReadOK"] == "0"
+    with pytest.raises(FormatError, match="Invalid GT3X packet synchronization byte"):
+        actigraph_reader(input_file)
 
 
 def test_actigraph_reader_rejects_bad_packet_checksum(
         actigraph_reader, tmp_path):
     input_file = tmp_path / "bad-checksum.gt3x"
-    output_dir = tmp_path / "output"
     packet = bytearray(
         _actigraph_packet(1_700_000_000, struct.pack("<hhh", 256, 0, 0))
     )
@@ -478,21 +393,13 @@ def test_actigraph_reader_rejects_bad_packet_checksum(
         [bytes(packet)],
     )
 
-    result = actigraph_reader(input_file, output_dir, check=False)
-
-    assert result.returncode != 0
-    assert _read_info(output_dir) == {
-        "ReadOK": "0",
-        "ReadErrors": "1",
-        "SampleRate": "4.0",
-    }
-    assert np.load(output_dir / "data.npy").shape == (0,)
+    with pytest.raises(FormatError, match="GT3X packet checksum mismatch"):
+        actigraph_reader(input_file)
 
 
 def test_actigraph_reader_rejects_truncated_packet_without_fabricating_samples(
         actigraph_reader, tmp_path):
     input_file = tmp_path / "truncated.gt3x"
-    output_dir = tmp_path / "output"
     packet = _actigraph_packet(
         1_700_000_000,
         struct.pack("<hhhhhh", 256, -256, 128, -512, 64, -128),
@@ -503,18 +410,72 @@ def test_actigraph_reader_rejects_truncated_packet_without_fabricating_samples(
         [packet[:-4]],
     )
 
-    result = actigraph_reader(input_file, output_dir, check=False)
+    with pytest.raises(FormatError, match="Unexpected end of V2 packet payload"):
+        actigraph_reader(input_file)
 
-    assert result.returncode != 0
-    assert "Unexpected end of V2 packet payload" in result.stderr
-    assert np.load(output_dir / "data.npy").shape == (0,)
-    assert _read_info(output_dir)["ReadOK"] == "0"
+
+@pytest.mark.parametrize("scale", ["0x1p1024", "-0x1p1024", "0x1.fffffffffffff8p1023"])
+def test_actigraph_reader_falls_back_to_device_scale_when_scale_overflows(
+        actigraph_reader, tmp_path, caplog, scale):
+    # Java's Double.parseDouble returns +-Infinity for an overflowing hexadecimal value (the
+    # last one overflows only after rounding), so the scale is ignored as invalid and the MOS
+    # serial's default of 256 is used, rather than the read being aborted.
+    input_file = tmp_path / "overflowing-scale.gt3x"
+    payload = struct.pack("<hhhhhh", 256, -256, 128, -512, 64, -128)
+    _write_gt3x_v2(
+        input_file,
+        _actigraph_metadata(4, scale),
+        [_actigraph_packet(1_700_000_000, payload)],
+    )
+
+    with caplog.at_level(logging.WARNING, logger="actipy"):
+        data, info = actigraph_reader(input_file)
+
+    assert "Ignoring invalid Acceleration Scale" in caplog.text
+    np.testing.assert_array_equal(
+        np.column_stack((data["x"], data["y"], data["z"])),
+        [[1.0, -1.0, 0.5], [-2.0, 0.25, -0.5]],
+    )
+    assert info["ReadErrors"] == 0
+
+
+_LONG_MAX, _LONG_MIN = 2**63 - 1, -(2**63)
+
+
+@pytest.mark.parametrize(
+    ("version", "expected_nanos"),
+    [
+        # firstSampleTime (0 here) + Math.round(1e19): Math.round saturates at Long.MAX_VALUE
+        (1, [0, _LONG_MAX]),
+        # timestamp * 1000 + Math.round(1e19) wraps around as a Java long; toNanos then saturates
+        (2, [1_700_000_000 * 1_000_000_000, _LONG_MIN]),
+    ],
+)
+def test_actigraph_reader_saturates_timestamps_like_java_at_extreme_sample_rate(
+        actigraph_reader, tmp_path, version, expected_nanos):
+    # A sample rate of 1e-16 Hz puts the second sample 1e19 ms after the first, beyond the long
+    # range. The expected times are the Java reader's output for these files. Converting them must
+    # not warn either (NumPy warns on out-of-range float-to-int casts).
+    input_file = tmp_path / f"extreme-rate-v{version}.gt3x"
+    metadata = _actigraph_metadata(1e-16, 256)
+    if version == 1:
+        _write_gt3x_v1(input_file, metadata, _pack_12_bit_pair((256, -256, 128), (-512, 64, -128)))
+    else:
+        payload = struct.pack("<hhhhhh", 256, -256, 128, -512, 64, -128)
+        _write_gt3x_v2(input_file, metadata, [_actigraph_packet(1_700_000_000, payload)])
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        data, info = actigraph_reader(input_file)
+
+    np.testing.assert_array_equal(data["time"].view("int64"), expected_nanos)
+    np.testing.assert_array_equal(data["x"], [1.0, -2.0])
+    assert info["ReadErrors"] == 0
 
 
 def test_actigraph_reader_keeps_samples_before_truncated_trailing_packet(
-        actigraph_reader, tmp_path):
+        actigraph_reader, tmp_path, caplog):
     input_file = tmp_path / "truncated-tail.gt3x"
-    output_dir = tmp_path / "output"
     valid = _actigraph_packet(
         1_700_000_000,
         struct.pack("<hhh", 256, -256, 128),
@@ -529,58 +490,41 @@ def test_actigraph_reader_keeps_samples_before_truncated_trailing_packet(
         [valid, truncated],
     )
 
-    result = actigraph_reader(input_file, output_dir)
+    with caplog.at_level(logging.WARNING, logger="actipy"):
+        data, info = actigraph_reader(input_file)
 
-    assert result.returncode == 0
-    assert "Stopping at truncated GT3X data" in result.stderr
-    data = np.load(output_dir / "data.npy")
+    assert "Stopping at truncated GT3X data" in caplog.text
     np.testing.assert_array_equal(data["x"], [1.0])
-    assert _read_info(output_dir) == {
-        "ReadOK": "1",
-        "ReadErrors": "1",
-        "SampleRate": "4.0",
+    assert info == {
+        "ReadOK": 1,
+        "ReadErrors": 1,
+        "SampleRate": 4.0,
     }
 
 
-def test_actigraph_reader_rejects_invalid_archive_before_creating_data(
+def test_actigraph_reader_rejects_invalid_archive(
         actigraph_reader, tmp_path):
     input_file = tmp_path / "invalid.gt3x"
-    output_dir = tmp_path / "output"
-    output_dir.mkdir()
-    (output_dir / "data.npy").write_bytes(b"stale data")
     with zipfile.ZipFile(input_file, "w") as archive:
         archive.writestr("info.txt", _actigraph_metadata(4, 256))
 
-    result = actigraph_reader(input_file, output_dir, check=False)
-
-    assert result.returncode != 0
-    assert not (output_dir / "data.npy").exists()
-    assert _read_info(output_dir) == {
-        "ReadOK": "0",
-        "ReadErrors": "1",
-        "SampleRate": "-1.0",
-    }
+    with pytest.raises(FormatError, match="not a supported V1 or V2 GT3X archive"):
+        actigraph_reader(input_file)
 
 
 def test_actigraph_reader_rejects_missing_required_metadata(
         actigraph_reader, tmp_path):
     input_file = tmp_path / "missing-rate.gt3x"
-    output_dir = tmp_path / "output"
     metadata = _actigraph_metadata(4, 256).replace("Sample Rate: 4\n", "")
     _write_gt3x_v2(input_file, metadata, [])
 
-    result = actigraph_reader(input_file, output_dir, check=False)
-
-    assert result.returncode != 0
-    assert "positive finite Sample Rate" in result.stderr
-    assert not (output_dir / "data.npy").exists()
-    assert _read_info(output_dir)["ReadOK"] == "0"
+    with pytest.raises(FormatError, match="positive finite Sample Rate"):
+        actigraph_reader(input_file)
 
 
 def test_actigraph_reader_preserves_existing_timezone_semantics(
         actigraph_reader, tmp_path):
     input_file = tmp_path / "timezone.gt3x"
-    output_dir = tmp_path / "output"
     timestamp = 1_700_000_000
     metadata = _actigraph_metadata(4, 256) + "TimeZone: -05:00:00\n"
     _write_gt3x_v2(
@@ -589,9 +533,7 @@ def test_actigraph_reader_preserves_existing_timezone_semantics(
         [_actigraph_packet(timestamp, struct.pack("<hhh", 256, 0, 0))],
     )
 
-    actigraph_reader(input_file, output_dir)
-
-    data = np.load(output_dir / "data.npy")
+    data, info = actigraph_reader(input_file)
     np.testing.assert_array_equal(
         data["time"].view("int64"),
         [timestamp * 1_000_000_000],

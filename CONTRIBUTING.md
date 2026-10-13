@@ -34,7 +34,7 @@ As you will be editing and testing the code, pull the latest version from the re
     $ bash install-dev.sh
     ```
 
-The prepared script `install-dev.sh` will compile the necessary Java files, install the current Python package in editable mode, and download test accelerometer files.
+The prepared script `install-dev.sh` will install the current Python package in editable mode, and download test accelerometer files.
 See [install-dev.sh](https://github.com/OxWearables/actipy/blob/master/install-dev.sh) for details.
 
 ### How to Contribute

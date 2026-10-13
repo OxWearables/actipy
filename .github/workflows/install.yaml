@@ -23,27 +23,6 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Setup java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'zulu'
-          java-version: '8'
-
-      - name: Compile java files (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          set -e
-          java -version
-          javac src/actipy/*.java
-
-      - name: Compile java files (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          java -version
-          javac src\actipy\*.java
-
       - name: Pip install this (Unix)
         if: runner.os != 'Windows'
         run: |

@@ -1,73 +1,21 @@
-import os
-import shutil
+import logging
 import struct
-import subprocess
-from pathlib import Path
+import warnings
 
 import numpy as np
 import pytest
 
-PROJECT_ROOT = Path(__file__).parents[1]
-SOURCE_DIR = PROJECT_ROOT / "src" / "actipy"
+import actipy
+from actipy import axivity_reader as axivity
+from actipy._reader_support import FormatError
 
 
-@pytest.fixture(scope="session")
-def axivity_reader(tmp_path_factory):
-    java = shutil.which("java")
-    javac = shutil.which("javac")
-    if java is None or javac is None:
-        missing = [
-            command
-            for command, executable in (("java", java), ("javac", javac))
-            if executable is None
-        ]
-        pytest.skip("Java toolchain unavailable: missing " + ", ".join(missing))
-
-    classes = tmp_path_factory.mktemp("axivity-reader-classes")
-    subprocess.run(
-        [
-            javac,
-            "-d",
-            str(classes),
-            str(SOURCE_DIR / "NpyWriter.java"),
-            str(SOURCE_DIR / "ReaderSupport.java"),
-            str(SOURCE_DIR / "AxivityReader.java"),
-        ],
-        check=True,
-    )
-
-    def run(
-            input_file, output_dir, check=True, stream=False,
-            stdout=subprocess.PIPE):
-        output_dir.mkdir(exist_ok=True)
-        command = [
-            java,
-            "-cp",
-            str(classes),
-            "AxivityReader",
-            "-i",
-            str(input_file),
-            "-o",
-            str(output_dir),
-        ]
-        if stream:
-            command.append("--stream")
-        return subprocess.run(
-            command,
-            check=check,
-            stdout=stdout,
-            stderr=subprocess.PIPE,
-            text=not stream,
-        )
+@pytest.fixture
+def axivity_reader():
+    def run(input_file):
+        return axivity.read(str(input_file))
 
     return run
-
-
-def _read_info(output_dir):
-    return dict(
-        line.split(":", 1)
-        for line in (output_dir / "info.txt").read_text().splitlines()
-    )
 
 
 def _cwa_timestamp(year, month, day, hour, minute, second):
@@ -130,15 +78,12 @@ def _axivity_block(
 def test_axivity_reader_decodes_ax3_samples_and_metadata(
         axivity_reader, tmp_path):
     input_file = tmp_path / "sample.cwa"
-    output_dir = tmp_path / "output"
     input_file.write_bytes(
         _axivity_block([(256, -256, 128), (512, 0, -512)])
     )
 
-    axivity_reader(input_file, output_dir)
-
-    data = np.load(output_dir / "data.npy")
-    assert data.dtype.names == (
+    data, info = axivity_reader(input_file)
+    assert tuple(data) == (
         "time", "x", "y", "z", "temperature", "light"
     )
     np.testing.assert_array_equal(
@@ -153,95 +98,16 @@ def test_axivity_reader_decodes_ax3_samples_and_metadata(
     np.testing.assert_array_equal(data["z"], [0.5, -2.0])
     np.testing.assert_array_equal(data["temperature"], [20.0, 20.0])
     np.testing.assert_allclose(data["light"], [10.0, 10.0])
-    assert _read_info(output_dir) == {
-        "ReadOK": "1",
-        "ReadErrors": "0",
-        "SampleRate": "4.0",
+    assert info == {
+        "ReadOK": 1,
+        "ReadErrors": 0,
+        "SampleRate": 4.0,
     }
-
-
-def test_axivity_reader_streams_columnar_chunks(axivity_reader, tmp_path):
-    input_file = tmp_path / "sample.cwa"
-    output_dir = tmp_path / "output"
-    input_file.write_bytes(
-        _axivity_block([(256, -256, 128), (512, 0, -512)])
-    )
-
-    output_dir.mkdir()
-    stale_data = output_dir / "data.npy"
-    stale_data.write_bytes(b"preserve me")
-
-    result = axivity_reader(input_file, output_dir, stream=True)
-
-    assert stale_data.read_bytes() == b"preserve me"
-    output = memoryview(result.stdout)
-    assert bytes(output[:8]) == b"ACTIPY01"
-    assert output[8] == 3
-    assert struct.unpack_from("<I", output, 9)[0] == 2
-    offset = 13
-    times = np.frombuffer(output[offset:offset + 16], dtype="datetime64[ns]")
-    offset += 16
-    columns = []
-    for _ in range(5):
-        columns.append(np.frombuffer(output[offset:offset + 8], dtype="f4"))
-        offset += 8
-    assert struct.unpack_from("<I", output, offset)[0] == 0
-    np.testing.assert_array_equal(
-        times,
-        np.array(
-            ["2024-01-02T03:04:05.000", "2024-01-02T03:04:05.250"],
-            dtype="datetime64[ns]",
-        ),
-    )
-    np.testing.assert_array_equal(columns[0], [1.0, 2.0])
-    np.testing.assert_array_equal(columns[1], [-1.0, 0.0])
-    np.testing.assert_array_equal(columns[2], [0.5, -2.0])
-    np.testing.assert_array_equal(columns[3], [20.0, 20.0])
-    np.testing.assert_allclose(columns[4], [10.0, 10.0])
-
-
-def test_axivity_stream_failure_preserves_existing_data_file(
-        axivity_reader, tmp_path):
-    input_file = tmp_path / "invalid.cwa"
-    output_dir = tmp_path / "output"
-    input_file.write_bytes(b"not a CWA block")
-    output_dir.mkdir()
-    stale_data = output_dir / "data.npy"
-    stale_data.write_bytes(b"preserve me")
-
-    result = axivity_reader(
-        input_file, output_dir, check=False, stream=True
-    )
-
-    assert result.returncode != 0
-    assert stale_data.read_bytes() == b"preserve me"
-
-
-def test_axivity_stream_write_failure_exits_nonzero(
-        axivity_reader, tmp_path):
-    input_file = tmp_path / "sample.cwa"
-    output_dir = tmp_path / "output"
-    input_file.write_bytes(_axivity_block([(256, -256, 128)]))
-    read_fd, write_fd = os.pipe()
-    os.close(read_fd)
-
-    with os.fdopen(write_fd, "wb") as broken_stdout:
-        result = axivity_reader(
-            input_file,
-            output_dir,
-            check=False,
-            stream=True,
-            stdout=broken_stdout,
-        )
-
-    assert result.returncode != 0
-    assert b"Could not finalize parser stream" in result.stderr
 
 
 def test_axivity_reader_detects_ax6_gyroscope_layout(
         axivity_reader, tmp_path):
     input_file = tmp_path / "sample-ax6.cwa"
-    output_dir = tmp_path / "output"
     raw_light = (2 << 10) | 341
     input_file.write_bytes(
         _axivity_block(
@@ -254,10 +120,8 @@ def test_axivity_reader_detects_ax6_gyroscope_layout(
         )
     )
 
-    axivity_reader(input_file, output_dir)
-
-    data = np.load(output_dir / "data.npy")
-    assert data.dtype.names == (
+    data, info = axivity_reader(input_file)
+    assert tuple(data) == (
         "time", "x", "y", "z", "gyro_x", "gyro_y", "gyro_z",
         "temperature", "light",
     )
@@ -270,40 +134,91 @@ def test_axivity_reader_detects_ax6_gyroscope_layout(
         [[1000.0, -500.0, 0.0], [500.0, 0.0, -250.0], [0.0, 250.0, -500.0]],
     )
 
-    stream_result = axivity_reader(
-        input_file, tmp_path / "stream-output", stream=True
-    )
-    output = memoryview(stream_result.stdout)
-    assert bytes(output[:8]) == b"ACTIPY01"
-    assert output[8] == 6
-    assert struct.unpack_from("<I", output, 9)[0] == 3
-    offset = 13 + 3 * 8  # Skip the timestamp column.
-    stream_columns = []
-    for _ in range(8):
-        stream_columns.append(
-            np.frombuffer(output[offset:offset + 3 * 4], dtype="f4")
+
+_GYROSCOPE_RAW_LIGHT = (2 << 10) | 341  # gyroscope range code 2 (2000 dps), light 341
+_ACCELERATION_UNIT = np.float32(256)
+_GYROSCOPE_UNIT = np.float32(32768) / np.float32(2000)
+
+
+def _expected_motion(samples):
+    """Java's values for unpacked samples: gyroscope x, y, z first if present, then acceleration."""
+
+    raw = np.array(samples, dtype=np.float32)
+    if raw.shape[1] < 6:
+        return {"xyz": raw[:, 0:3] / _ACCELERATION_UNIT}
+    return {"xyz": raw[:, 3:6] / _ACCELERATION_UNIT, "gyro": raw[:, 0:3] / _GYROSCOPE_UNIT}
+
+
+@pytest.mark.parametrize("num_axes", [4, 5, 7, 8, 9, 15])
+def test_axivity_reader_uses_declared_axis_count_as_sample_stride(
+        axivity_reader, tmp_path, num_axes):
+    # Each sample holds the declared number of 16-bit values; axes beyond the gyroscope and
+    # accelerometer (e.g. a magnetometer) are skipped, as in the Java reader, rather than read
+    # as the start of the next sample. Every value is distinct, so a wrong stride shows.
+    capacity = 480 // (2 * num_axes)
+    samples = [[16 * sample + axis for axis in range(num_axes)] for sample in range(capacity)]
+    input_file = tmp_path / f"axes-{num_axes}.cwa"
+    input_file.write_bytes(_axivity_block(samples, raw_light=_GYROSCOPE_RAW_LIGHT))
+
+    data, info = axivity_reader(input_file)
+
+    expected = _expected_motion(samples)
+    np.testing.assert_array_equal(np.column_stack((data["x"], data["y"], data["z"])), expected["xyz"])
+    if num_axes >= 6:
+        np.testing.assert_array_equal(
+            np.column_stack((data["gyro_x"], data["gyro_y"], data["gyro_z"])), expected["gyro"]
         )
-        offset += 3 * 4
+    else:
+        assert "gyro_x" not in data
+    assert info["ReadErrors"] == 0
+
+
+@pytest.mark.parametrize(
+    "layouts",
+    [
+        pytest.param([(6, 2), (9, 2), (6, 2)], id="6-and-9-axis"),
+        pytest.param([(3, 2), (4, 2), (3, 0), (5, 2)], id="3-4-5-axis-and-packed"),
+    ],
+)
+def test_axivity_reader_decodes_each_block_with_its_own_layout(
+        axivity_reader, tmp_path, layouts):
+    # Blocks with different axis counts (or packings) can share one output schema (AX3 or AX6);
+    # each block must still be decoded with its own sample stride.
+    blocks, expected = [], []
+    for number, (num_axes, packing) in enumerate(layouts):
+        count = 480 // (4 if packing == 0 else 2 * num_axes) - number  # full and partly filled blocks
+        samples = [
+            [(100 * number + 16 * sample + axis) % 500 for axis in range(num_axes)]  # fits 10-bit packing
+            for sample in range(count)
+        ]
+        blocks.append(_axivity_block(
+            samples, packing=packing, raw_light=_GYROSCOPE_RAW_LIGHT, timestamp=(2024, 1, 2, 3, 4 + number, 5)
+        ))
+        expected.append(_expected_motion(samples))
+    input_file = tmp_path / "mixed-layouts.cwa"
+    input_file.write_bytes(b"".join(blocks))
+
+    data, info = axivity_reader(input_file)
+
     np.testing.assert_array_equal(
-        np.column_stack(stream_columns[:3]),
-        [[1.0, -1.0, 0.5], [2.0, 0.0, -2.0], [-1.0, 0.5, 1.0]],
+        np.column_stack((data["x"], data["y"], data["z"])),
+        np.concatenate([block["xyz"] for block in expected]),
     )
-    np.testing.assert_allclose(
-        np.column_stack(stream_columns[3:6]),
-        [[1000.0, -500.0, 0.0], [500.0, 0.0, -250.0], [0.0, 250.0, -500.0]],
-    )
+    if layouts[0][0] >= 6:
+        np.testing.assert_array_equal(
+            np.column_stack((data["gyro_x"], data["gyro_y"], data["gyro_z"])),
+            np.concatenate([block["gyro"] for block in expected]),
+        )
+    assert info["ReadErrors"] == 0
 
 
 def test_axivity_reader_decodes_packed_samples(axivity_reader, tmp_path):
     input_file = tmp_path / "packed.cwa"
-    output_dir = tmp_path / "output"
     input_file.write_bytes(
         _axivity_block([(256, -256, 128)], packing=0)
     )
 
-    axivity_reader(input_file, output_dir)
-
-    data = np.load(output_dir / "data.npy")
+    data, info = axivity_reader(input_file)
     np.testing.assert_array_equal(
         np.column_stack((data["x"], data["y"], data["z"])),
         [[1.0, -1.0, 0.5]],
@@ -320,7 +235,6 @@ def test_axivity_reader_decodes_packed_samples(axivity_reader, tmp_path):
 def test_axivity_reader_applies_signed_rate_code_timestamp_offset(
         axivity_reader, tmp_path, timestamp_offset, expected_times):
     input_file = tmp_path / "timestamp-offset.cwa"
-    output_dir = tmp_path / "output"
     input_file.write_bytes(
         _axivity_block(
             [(256, 0, 0), (512, 0, 0)],
@@ -329,21 +243,18 @@ def test_axivity_reader_applies_signed_rate_code_timestamp_offset(
         )
     )
 
-    axivity_reader(input_file, output_dir)
-
-    data = np.load(output_dir / "data.npy")
+    data, info = axivity_reader(input_file)
     np.testing.assert_array_equal(
         data["time"],
         np.array(expected_times, dtype="datetime64[ns]"),
     )
     np.testing.assert_array_equal(data["x"], [1.0, 2.0])
-    assert _read_info(output_dir)["SampleRate"] == "100.0"
+    assert info["SampleRate"] == 100.0
 
 
 def test_axivity_reader_skips_bad_checksum_and_continues(
         axivity_reader, tmp_path):
     input_file = tmp_path / "bad-checksum.cwa"
-    output_dir = tmp_path / "output"
     corrupt_block = bytearray(
         _axivity_block([(256, 256, 256)], rate_code=10)
     )
@@ -355,45 +266,39 @@ def test_axivity_reader_skips_bad_checksum_and_continues(
     )
     input_file.write_bytes(bytes(corrupt_block) + valid_block)
 
-    axivity_reader(input_file, output_dir)
-
-    data = np.load(output_dir / "data.npy")
+    data, info = axivity_reader(input_file)
     np.testing.assert_array_equal(data["x"], [2.0])
     np.testing.assert_array_equal(data["y"], [3.0])
     np.testing.assert_array_equal(data["z"], [4.0])
-    assert _read_info(output_dir) == {
-        "ReadOK": "1",
-        "ReadErrors": "1",
-        "SampleRate": "100.0",
+    assert info == {
+        "ReadOK": 1,
+        "ReadErrors": 1,
+        "SampleRate": 100.0,
     }
 
 
 def test_axivity_reader_skips_block_with_zero_sample_rate(
         axivity_reader, tmp_path):
     input_file = tmp_path / "bad-rate.cwa"
-    output_dir = tmp_path / "output"
     input_file.write_bytes(
         _axivity_block([(256, 256, 256)], frequency=0)
         + _axivity_block([(512, 768, 1024)], frequency=4)
     )
 
-    axivity_reader(input_file, output_dir)
-
-    data = np.load(output_dir / "data.npy")
+    data, info = axivity_reader(input_file)
     np.testing.assert_array_equal(data["x"], [2.0])
     np.testing.assert_array_equal(data["y"], [3.0])
     np.testing.assert_array_equal(data["z"], [4.0])
-    assert _read_info(output_dir) == {
-        "ReadOK": "1",
-        "ReadErrors": "1",
-        "SampleRate": "4.0",
+    assert info == {
+        "ReadOK": 1,
+        "ReadErrors": 1,
+        "SampleRate": 4.0,
     }
 
 
 def test_axivity_reader_ignores_corrupt_first_block_when_selecting_schema(
         axivity_reader, tmp_path):
     input_file = tmp_path / "corrupt-layout.cwa"
-    output_dir = tmp_path / "output"
     corrupt = bytearray(
         _axivity_block([(1, 2, 3)], rate_code=10)
     )
@@ -405,41 +310,103 @@ def test_axivity_reader_ignores_corrupt_first_block_when_selecting_schema(
     )
     input_file.write_bytes(bytes(corrupt) + valid)
 
-    axivity_reader(input_file, output_dir)
-
-    data = np.load(output_dir / "data.npy")
-    assert data.dtype.names == (
+    data, info = axivity_reader(input_file)
+    assert tuple(data) == (
         "time", "x", "y", "z", "temperature", "light"
     )
     np.testing.assert_array_equal(data["x"], [1.0])
-    assert _read_info(output_dir)["ReadErrors"] == "1"
+    assert info["ReadErrors"] == 1
 
 
 def test_axivity_reader_keeps_samples_before_partial_trailing_block(
-        axivity_reader, tmp_path):
+        axivity_reader, tmp_path, caplog):
     input_file = tmp_path / "partial.cwa"
-    output_dir = tmp_path / "output"
     input_file.write_bytes(_axivity_block([(256, 0, 0)]) + b"AX")
 
-    result = axivity_reader(input_file, output_dir)
+    with caplog.at_level(logging.WARNING, logger="actipy"):
+        data, info = axivity_reader(input_file)
 
-    assert result.returncode == 0
-    assert "Unexpected partial CWA block" in result.stderr
-    np.testing.assert_array_equal(
-        np.load(output_dir / "data.npy")["x"],
-        [1.0],
-    )
-    assert _read_info(output_dir) == {
-        "ReadOK": "1",
-        "ReadErrors": "1",
-        "SampleRate": "4.0",
+    assert "Unexpected partial CWA block" in caplog.text
+    np.testing.assert_array_equal(data["x"], [1.0])
+    assert info == {
+        "ReadOK": 1,
+        "ReadErrors": 1,
+        "SampleRate": 4.0,
     }
+
+
+class _TrickleStream:
+    """A stream returning at most ``step`` bytes per ``readinto`` call, as a slow or remote file may."""
+
+    def __init__(self, data, step):
+        self.data, self.step, self.position = data, step, 0
+
+    def readinto(self, buffer):
+        view = memoryview(buffer).cast("B")
+        chunk = self.data[self.position:self.position + min(self.step, len(view))]
+        view[:len(chunk)] = chunk
+        self.position += len(chunk)
+        return len(chunk)
+
+
+def test_axivity_exact_read_fills_the_buffer_across_short_reads():
+    # The buffer is two 512-byte rows; a 600-byte first read must not be mistaken for a full one.
+    data = bytes(range(256)) * 4
+    buffer = np.zeros((2, 512), dtype=np.uint8)
+
+    axivity._read_exact(_TrickleStream(data, 600), buffer)
+
+    assert buffer.tobytes() == data
+
+
+def test_axivity_exact_read_reports_premature_end_of_file():
+    buffer = np.zeros((2, 512), dtype=np.uint8)
+
+    with pytest.raises(FormatError, match="Unexpected end of CWA file"):
+        axivity._read_exact(_TrickleStream(bytes(600), 600), buffer)
+
+
+def test_axivity_reader_recovery_is_not_affected_by_warning_filters(
+        axivity_reader, tmp_path):
+    # Recoverable problems are logged, not raised with warnings.warn, so running with
+    # warnings as errors (e.g. pytest -W error) still returns the valid samples.
+    input_file = tmp_path / "partial.cwa"
+    input_file.write_bytes(_axivity_block([(256, 0, 0)]) + b"AX")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        data, info = axivity_reader(input_file)
+
+    np.testing.assert_array_equal(data["x"], [1.0])
+    assert info["ReadErrors"] == 1
+
+
+def test_read_device_recovers_from_truncated_cwa_when_warnings_are_errors(tmp_path):
+    # The same through the public API: no reader warning escapes read_device.
+    input_file = tmp_path / "partial.cwa"
+    input_file.write_bytes(
+        b"".join(_axivity_block([(256, 0, 0)] * 4, timestamp=(2024, 1, 2, 3, 4 + i, 5)) for i in range(3))
+        + b"AX"
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        data, info = actipy.read_device(
+            str(input_file),
+            lowpass_hz=None,
+            calibrate_gravity=False,
+            detect_nonwear=False,
+            resample_hz=None,
+            verbose=False,
+        )
+
+    assert len(data) == 12
+    assert info["ReadErrors"] == 1
 
 
 def test_axivity_reader_rejects_layout_changes(
         axivity_reader, tmp_path):
     input_file = tmp_path / "mixed-layout.cwa"
-    output_dir = tmp_path / "output"
     input_file.write_bytes(
         _axivity_block([(256, 0, 0)], rate_code=10)
         + _axivity_block(
@@ -449,12 +416,5 @@ def test_axivity_reader_rejects_layout_changes(
         )
     )
 
-    result = axivity_reader(input_file, output_dir, check=False)
-
-    assert result.returncode != 0
-    assert "CWA axis layout changes from AX3 to AX6" in result.stderr
-    np.testing.assert_array_equal(
-        np.load(output_dir / "data.npy")["x"],
-        [1.0],
-    )
-    assert _read_info(output_dir)["ReadOK"] == "0"
+    with pytest.raises(FormatError, match="CWA axis layout changes from AX3 to AX6"):
+        axivity_reader(input_file)

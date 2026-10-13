@@ -17,8 +17,8 @@ Main Functions
 read_device : Read device file and apply processing pipeline
 process : Apply processing pipeline to existing DataFrame
 
-The module uses Java-based parsers for most device types (via subprocess calls),
-and a pure Python parser for Matrix devices. All parsers output data in a
+Each device type has its own parser: vectorized NumPy for Axivity, ActiGraph and
+GENEActiv, and ``struct``-based Python for Matrix. All parsers output data in a
 consistent pandas DataFrame format with a DateTimeIndex.
 
 Notes
@@ -31,21 +31,17 @@ Notes
 import gzip
 import math
 import os
-import pathlib
 import shutil
 import struct
-import subprocess
 import tempfile
 import time
 import zipfile
 from datetime import datetime
-from io import BufferedReader
 from numbers import Real
 from typing import (
     IO,
     Any,
     Dict,
-    List,
     Literal,
     Optional,
     Tuple,
@@ -54,12 +50,11 @@ from typing import (
     cast,
 )
 
-import numpy as np
 import pandas as pd
-from numpy.typing import NDArray
 
-from actipy import matrix_reader
+from actipy import actigraph_reader, axivity_reader, geneactiv_reader, matrix_reader
 from actipy import processing as P
+from actipy._reader_support import ReadResult
 
 __all__ = [
     'read_device',
@@ -72,7 +67,6 @@ Info = Dict[str, Any]
 Frequency = Optional[Union[int, float, bool]]
 ResampleFrequency = Optional[Union[Literal['uniform'], int, float, bool]]
 Timestamp = Optional[Union[str, datetime]]
-StreamColumns = Dict[str, NDArray[Any]]
 
 
 class CalibrateGravityOptions(TypedDict, total=False):
@@ -89,19 +83,6 @@ class FlagNonwearOptions(TypedDict, total=False):
     patience: str
     window: str
     stdtol: float
-
-
-_JAVA_STREAM_MAGIC = b'ACTIPY01'
-_JAVA_STREAM_ROWS_PER_CHUNK = 8192
-_JAVA_STREAM_SCHEMAS = {
-    1: ('time', 'x', 'y', 'z'),
-    2: ('time', 'x', 'y', 'z', 'temperature'),
-    3: ('time', 'x', 'y', 'z', 'temperature', 'light'),
-    6: (
-        'time', 'x', 'y', 'z', 'gyro_x', 'gyro_y', 'gyro_z',
-        'temperature', 'light',
-    ),
-}
 
 
 def _validate_resample_frequency(resample_hz: object) -> None:
@@ -448,7 +429,7 @@ def process(data: pd.DataFrame, sample_rate: float,
 
 
 def _read_device(input_file: str, verbose: bool = True) -> Tuple[pd.DataFrame, Info]:
-    """Read a device file with the Java parser and return data and metadata."""
+    """Read a device file with its parser and return data and metadata."""
 
     # Use a separate reader if the file is from a Matrix device
     if matrix_reader.is_matrix_bin_file(input_file):
@@ -473,16 +454,14 @@ def _read_device(input_file: str, verbose: bool = True) -> Tuple[pd.DataFrame, I
         info.update(info_device)
 
         timer.start("Reading file...")
-        streamed_data, info_java = _java_read_device_stream(
-            input_file, tmpdir, verbose
-        )
-        info.update(info_java)
+        columns, info_reader = _read_device_columns(input_file)
+        info.update(info_reader)
         timer.stop()
 
         timer.start("Converting to dataframe...")
-        # Each streamed field already owns a contiguous in-memory array, so
+        # Each decoded field already owns a contiguous in-memory array, so
         # pandas can use it directly without another full data copy.
-        data = pd.DataFrame(streamed_data, copy=False)
+        data = pd.DataFrame(columns, copy=False)
         data.set_index('time', inplace=True)
         timer.stop()
 
@@ -550,202 +529,23 @@ def _read_device_matrix(input_file: str, verbose: bool = True) -> Tuple[pd.DataF
 
 
 
-def java_read_device(input_file: str, output_dir: str, verbose: bool = True) -> Info:
-    """Call the Java reader for a supported device file."""
+def _read_device_columns(input_file: str) -> ReadResult:
+    """Decode a supported device file into columns and reader metadata."""
 
-    java_reader = _java_reader_class(input_file)
-
-    command: List[str] = [
-        "java",
-        "-XX:ParallelGCThreads=1",
-        "-cp", str(pathlib.Path(__file__).parent),
-        java_reader,
-        "-i", input_file,
-        "-o", output_dir
-    ]
-    if verbose:
-        command.append("-v")
-    subprocess.run(command, check=True)
-
-    return _read_java_info(output_dir)
-
-
-def _java_reader_class(input_file: str) -> str:
-    """Select the Java parser class for a supported device file."""
-
-    if input_file.lower().endswith('.cwa'):
-        return 'AxivityReader'
-
-    if input_file.lower().endswith('.gt3x'):
-        return 'ActigraphReader'
-
-    if input_file.lower().endswith('.bin'):
-        return 'GENEActivReader'
-
+    extension = input_file.lower()
+    if extension.endswith('.cwa'):
+        return axivity_reader.read(input_file)
+    if extension.endswith('.gt3x'):
+        return actigraph_reader.read(input_file)
+    if extension.endswith('.bin'):
+        return geneactiv_reader.read(input_file)
     raise ValueError(f"Unknown file extension: {input_file}")
-
-
-def _java_read_device_stream(
-    input_file: str,
-    output_dir: str,
-    verbose: bool = True,
-) -> Tuple[StreamColumns, Info]:
-    """Read device columns directly from a Java parser binary stream."""
-
-    command: List[str] = [
-        "java",
-        "-XX:ParallelGCThreads=1",
-        "-cp", str(pathlib.Path(__file__).parent),
-        _java_reader_class(input_file),
-        "-i", input_file,
-        "-o", output_dir,
-        "--stream",
-    ]
-    if verbose:
-        command.append("-v")
-
-    process = subprocess.Popen(command, stdout=subprocess.PIPE)
-    if process.stdout is None:  # pragma: no cover - guaranteed by PIPE
-        process.kill()
-        process.wait()
-        raise RuntimeError("Could not open the Java parser output stream")
-
-    try:
-        arrays = _read_java_stream_arrays(
-            cast(BufferedReader, process.stdout)
-        )
-    except EOFError as error:
-        process.stdout.close()
-        return_code = process.wait()
-        if return_code != 0:
-            raise subprocess.CalledProcessError(
-                return_code, command
-            ) from error
-        raise
-    except BaseException:
-        process.stdout.close()
-        if process.poll() is None:
-            process.kill()
-        process.wait()
-        raise
-    else:
-        process.stdout.close()
-        return_code = process.wait()
-        if return_code != 0:
-            raise subprocess.CalledProcessError(return_code, command)
-
-    return arrays, _read_java_info(output_dir)
-
-
-def _read_java_stream_arrays(stream: BufferedReader) -> StreamColumns:
-    """Decode the chunk framing around streamed device columns."""
-
-    magic = _read_exact(stream, len(_JAVA_STREAM_MAGIC))
-    if magic != _JAVA_STREAM_MAGIC:
-        raise ValueError("Invalid Java parser stream header")
-    schema_code = _read_exact(stream, 1)[0]
-    try:
-        fields = _JAVA_STREAM_SCHEMAS[schema_code]
-    except KeyError as error:
-        raise ValueError(
-            f"Unsupported Java parser stream schema: {schema_code}"
-        ) from error
-
-    dtypes = {
-        field: np.dtype('datetime64[ns]' if field == 'time' else 'f4')
-        for field in fields
-    }
-    arrays = {
-        field: np.empty(0, dtype=dtypes[field]) for field in fields
-    }
-    max_rows = np.iinfo(np.intp).max // sum(
-        dtype.itemsize for dtype in dtypes.values()
-    )
-
-    rows = 0
-    capacity = 0
-    while True:
-        chunk_rows = struct.unpack('<I', _read_exact(stream, 4))[0]
-        if chunk_rows == 0:
-            break
-        if chunk_rows > _JAVA_STREAM_ROWS_PER_CHUNK:
-            raise ValueError(
-                f"Invalid Java parser stream chunk size: {chunk_rows}"
-            )
-        if chunk_rows > max_rows - rows:
-            raise ValueError("Java parser stream is too large")
-        chunk_end = rows + chunk_rows
-        if chunk_end > capacity:
-            capacity = min(
-                max_rows,
-                max(
-                    chunk_end,
-                    _JAVA_STREAM_ROWS_PER_CHUNK
-                    if capacity == 0 else capacity * 2,
-                ),
-            )
-            for values in arrays.values():
-                values.resize(capacity, refcheck=False)
-        for field in fields:
-            _read_array_slice(stream, arrays[field], rows, chunk_end)
-        rows = chunk_end
-
-    for values in arrays.values():
-        values.resize(rows, refcheck=False)
-    return arrays
-
-
-def _read_exact(stream: BufferedReader, size: int) -> bytes:
-    """Read exactly ``size`` bytes or fail on a truncated parser stream."""
-
-    chunks = bytearray(size)
-    view = memoryview(chunks)
-    offset = 0
-    while offset < size:
-        count = stream.readinto(view[offset:])
-        if not count:
-            raise EOFError("Java parser stream ended unexpectedly")
-        offset += count
-    return bytes(chunks)
-
-
-def _read_array_slice(
-    stream: BufferedReader,
-    target: NDArray[Any],
-    start: int,
-    end: int,
-) -> None:
-    """Fill a contiguous slice of a one-dimensional NumPy array."""
-
-    byte_view = memoryview(cast(Any, target.view(np.uint8)))
-    item_size = target.dtype.itemsize
-    view = byte_view[start * item_size:end * item_size]
-    offset = 0
-    while offset < len(view):
-        count = stream.readinto(view[offset:])
-        if not count:
-            raise EOFError("Java parser stream ended unexpectedly")
-        offset += count
-
-
-def _read_java_info(output_dir: str) -> Info:
-    """Load and type the metadata emitted by a Java device reader."""
-
-    # Each line is a key:value pair.
-    with open(os.path.join(output_dir, "info.txt"), 'r') as f:
-        info: Info = dict(line.split(':') for line in f.read().splitlines())
-
-    info['ReadOK'] = int(info['ReadOK'])
-    info['ReadErrors'] = int(info['ReadErrors'])
-    info['SampleRate'] = float(info['SampleRate'])
-
-    return info
 
 
 def decompr(input_file: str, target_dir: str) -> str:
     """Decompress a supported archive into ``target_dir``."""
 
-    # The Java readers accept decompressed .gz and .zip inputs.
+    # The device readers accept decompressed .gz and .zip inputs.
     filename = os.path.basename(input_file)
     uncompr_filename = os.path.splitext(filename)[0]
     newfile = os.path.join(target_dir, uncompr_filename)

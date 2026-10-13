@@ -6,21 +6,10 @@ import tarfile
 from pathlib import Path
 from zipfile import ZipFile
 
-import pytest
-
 PROJECT_ROOT = Path(__file__).parents[1]
 FIXTURE = (
     PROJECT_ROOT / "tests" / "data" / "parser-fixtures" / "axivity-ax3.cwa"
 )
-
-
-def _require_java_toolchain():
-    missing = [
-        command for command in ("java", "javac")
-        if shutil.which(command) is None
-    ]
-    if missing:
-        pytest.skip("Java toolchain unavailable: missing " + ", ".join(missing))
 
 
 def _copy_clean_source(destination):
@@ -29,7 +18,6 @@ def _copy_clean_source(destination):
         "LICENSE.md",
         "MANIFEST.in",
         "README.md",
-        "build_java.py",
         "pyproject.toml",
         "setup.py",
         "versioneer.py",
@@ -38,15 +26,13 @@ def _copy_clean_source(destination):
     shutil.copytree(
         PROJECT_ROOT / "src",
         destination / "src",
-        ignore=shutil.ignore_patterns("*.class", "__pycache__"),
+        ignore=shutil.ignore_patterns("__pycache__"),
     )
 
 
-def test_clean_sdist_and_editable_builds_compile_java_readers(tmp_path):
-    _require_java_toolchain()
+def test_clean_sdist_and_wheel_are_pure_python(tmp_path):
     checkout = tmp_path / "checkout"
     _copy_clean_source(checkout)
-    assert not list(checkout.glob("src/actipy/*.class"))
 
     editable_dist = tmp_path / "editable-dist"
     editable_dist.mkdir()
@@ -67,7 +53,6 @@ def test_clean_sdist_and_editable_builds_compile_java_readers(tmp_path):
         capture_output=True,
         text=True,
     )
-    assert (checkout / "src" / "actipy" / "AxivityReader.class").exists()
 
     sdist_dir = tmp_path / "sdist"
     subprocess.run(
@@ -80,9 +65,8 @@ def test_clean_sdist_and_editable_builds_compile_java_readers(tmp_path):
     sdist = next(sdist_dir.glob("*.tar.gz"))
     with tarfile.open(sdist) as archive:
         names = archive.getnames()
-    assert any(name.endswith("/build_java.py") for name in names)
-    assert any(name.endswith("/src/actipy/AxivityReader.java") for name in names)
-    assert not any(name.endswith(".class") for name in names)
+    assert any(name.endswith("/src/actipy/axivity_reader.py") for name in names)
+    assert not any(name.endswith((".java", ".class")) for name in names)
 
     wheel_dir = tmp_path / "wheel"
     wheel_dir.mkdir()
@@ -103,10 +87,11 @@ def test_clean_sdist_and_editable_builds_compile_java_readers(tmp_path):
         text=True,
     )
     wheel = next(wheel_dir.glob("*.whl"))
+    assert wheel.name.endswith("-py3-none-any.whl")
     with ZipFile(wheel) as archive:
         wheel_names = set(archive.namelist())
-    assert "actipy/AxivityReader.class" in wheel_names
-    assert "actipy/ReaderSupport.class" in wheel_names
+    assert "actipy/axivity_reader.py" in wheel_names
+    assert not any(name.endswith((".java", ".class")) for name in wheel_names)
 
     installed = tmp_path / "installed"
     subprocess.run(
@@ -125,8 +110,6 @@ def test_clean_sdist_and_editable_builds_compile_java_readers(tmp_path):
         capture_output=True,
         text=True,
     )
-    output_dir = tmp_path / "reader-output"
-    output_dir.mkdir()
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(installed)
     subprocess.run(
@@ -136,15 +119,13 @@ def test_clean_sdist_and_editable_builds_compile_java_readers(tmp_path):
             (
                 "import pathlib, sys; "
                 "from actipy import reader; "
-                "assert pathlib.Path(sys.argv[3]).resolve() in "
+                "assert pathlib.Path(sys.argv[2]).resolve() in "
                 "pathlib.Path(reader.__file__).resolve().parents; "
-                "arrays, info = reader._java_read_device_stream("
-                "sys.argv[1], sys.argv[2], verbose=False); "
+                "arrays, info = reader._read_device_columns(sys.argv[1]); "
                 "assert len(arrays['time']) > 0; "
                 "assert info['ReadOK'] == 1"
             ),
             str(FIXTURE),
-            str(output_dir),
             str(installed),
         ],
         cwd=tmp_path,

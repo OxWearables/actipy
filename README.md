@@ -20,11 +20,6 @@ Axivity3 is the activity tracker watch used in the large-scale
     $ python --version  # or python3 --version
     ```
 
-- ☕ Java 8 (1.8.0) or greater
-    ```console
-    $ java -version
-    ```
-
 ### 📦 Install
 
 ```bash

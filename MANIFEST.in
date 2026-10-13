@@ -1,4 +1,1 @@
-include build_java.py
-include src/actipy/*.java
-global-exclude *.class
 recursive-exclude test *

@@ -9,11 +9,6 @@ Prerequisite
 
         $ python --version  # or python3 --version
 
-- Java 8 (1.8.0) or greater
-    .. code-block:: console
-
-        $ java -version
-
 
 Installation
 ------------

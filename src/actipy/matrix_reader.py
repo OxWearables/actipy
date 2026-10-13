@@ -2,8 +2,7 @@
 Binary file reader for Matrix wearable devices.
 
 This module provides a pure Python implementation for reading and parsing
-binary data files from Matrix wearable devices. Unlike other device readers
-in actipy, this does not use Java parsers.
+binary data files from Matrix wearable devices.
 
 Binary File Structure
 ---------------------
