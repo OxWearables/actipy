@@ -23,12 +23,14 @@ consistent pandas DataFrame format with a DateTimeIndex.
 
 Notes
 -----
-- Files can be compressed (.gz, .zip) and will be automatically decompressed
+- Files can be compressed (.gz, .zip, .xz, .bz2) and will be automatically decompressed
 - Processing is memory-efficient using chunked operations for large files
 - Temporary files are created during parsing and cleaned up automatically
 """
 
+import bz2
 import gzip
+import lzma
 import math
 import os
 import pathlib
@@ -91,6 +93,8 @@ class FlagNonwearOptions(TypedDict, total=False):
     stdtol: float
 
 
+COMPRESSED_EXTENSIONS = (".gz", ".zip", ".xz", ".bz2")
+
 _JAVA_STREAM_MAGIC = b'ACTIPY01'
 _JAVA_STREAM_ROWS_PER_CHUNK = 8192
 _JAVA_STREAM_SCHEMAS = {
@@ -146,7 +150,7 @@ def read_device(input_file: str,
     gravity calibration, nonwear detection, and resampling.
 
     :param input_file: Path to accelerometer file (.cwa, .gt3x, .bin).
-        Compressed files (.gz, .zip) are automatically decompressed.
+        Compressed files (.gz, .zip, .xz, .bz2) are automatically decompressed.
     :type input_file: str
     :param lowpass_hz: Cutoff frequency (Hz) for Butterworth lowpass filter.
         Defaults to 20 Hz. Pass None or False to disable filtering.
@@ -464,7 +468,7 @@ def _read_device(input_file: str, verbose: bool = True) -> Tuple[pd.DataFrame, I
         info['Filename'] = input_file
         info['Filesize(MB)'] = round(os.path.getsize(input_file) / (1024 * 1024), 1)
 
-        if input_file.lower().endswith((".gz", ".zip")):
+        if input_file.lower().endswith(COMPRESSED_EXTENSIONS):
             timer.start("Decompressing...")
             input_file = decompr(input_file, target_dir=tmpdir)
             timer.stop()
@@ -510,7 +514,7 @@ def _read_device_matrix(input_file: str, verbose: bool = True) -> Tuple[pd.DataF
         info['Device'] = 'Matrix'
         info['DeviceID'] = 'Matrix'
 
-        if input_file.lower().endswith((".gz", ".zip")):
+        if input_file.lower().endswith(COMPRESSED_EXTENSIONS):
             timer.start("Decompressing...")
             input_file = decompr(input_file, target_dir=tmpdir)
             timer.stop()
@@ -745,13 +749,16 @@ def _read_java_info(output_dir: str) -> Info:
 def decompr(input_file: str, target_dir: str) -> str:
     """Decompress a supported archive into ``target_dir``."""
 
-    # The Java readers accept decompressed .gz and .zip inputs.
+    # The Java readers accept decompressed .gz, .zip, .xz and .bz2 inputs.
     filename = os.path.basename(input_file)
     uncompr_filename = os.path.splitext(filename)[0]
     newfile = os.path.join(target_dir, uncompr_filename)
 
-    if input_file.lower().endswith(".gz"):
-        with gzip.open(input_file, 'rb') as fin:
+    stream_openers = {".gz": gzip.open, ".xz": lzma.open, ".bz2": bz2.open}
+    ext = os.path.splitext(input_file)[1].lower()
+
+    if ext in stream_openers:
+        with stream_openers[ext](input_file, 'rb') as fin:
             with open(newfile, 'wb') as fout:
                 shutil.copyfileobj(fin, fout)
 

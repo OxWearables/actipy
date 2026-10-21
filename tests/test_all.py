@@ -1,9 +1,12 @@
+import bz2
 from functools import lru_cache, reduce
+import lzma
 import operator
 import struct
 import zipfile
 
 import numpy as np
+import pytest
 from pytest import approx
 import pandas as pd
 import joblib
@@ -83,6 +86,36 @@ def test_read_actigraph_uses_metadata_scale(tmp_path):
     assert info["DeviceID"] == "STM2E24245655"
     assert info["ReadErrors"] == 0
     assert data.index[0] == pd.Timestamp(timestamp, unit="s")
+    np.testing.assert_allclose(data.iloc[0], [1.0, -1.0, 0.5])
+
+
+@pytest.mark.parametrize(
+    "ext, opener",
+    [(".xz", lzma.open), (".bz2", bz2.open)],
+)
+def test_read_device_decompresses_stream_compressed_files(tmp_path, ext, opener):
+    """Stream-compressed device files are decompressed before reading."""
+
+    gt3x_file = tmp_path / "sample.gt3x"
+    _write_gt3x(
+        gt3x_file,
+        "Serial Number: STM2E24245655\n"
+        "Sample Rate: 30\n"
+        "Start Date: 638355968000000000\n"
+        "Acceleration Min: -8.0\n"
+        "Acceleration Max: 8.0\n"
+        "Acceleration Scale: 256.0\n",
+        (256, -256, 128),
+    )
+    compressed_file = tmp_path / f"sample.gt3x{ext}"
+    with opener(compressed_file, "wb") as fout:
+        fout.write(gt3x_file.read_bytes())
+    gt3x_file.unlink()
+
+    data, info = _read_gt3x(compressed_file)
+
+    assert info["DeviceID"] == "STM2E24245655"
+    assert info["ReadErrors"] == 0
     np.testing.assert_allclose(data.iloc[0], [1.0, -1.0, 0.5])
 
 
