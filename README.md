@@ -108,8 +108,20 @@ data, info = actipy.read_device(
 )
 ```
 
-### 📊 Processing a custom CSV file
-You can also use the routines in `actipy.processing` to process custom CSV files, or for more fine-grained control:
+### 📊 Processing a CSV or pickle file
+`read_device` also accepts a CSV (`.csv`, optionally compressed, e.g. `.csv.gz`) or pandas pickle (`.pkl`) file of raw acceleration with columns `time,x,y,z`, and runs the same processing pipeline on it:
+
+```python
+data, info = actipy.read_device("sample.csv.gz")  # or "sample.pkl"
+
+# CSV with differently named columns (given in time,x,y,z order)
+data, info = actipy.read_device("sample.csv", csv_txyz="timestamp,ax,ay,az")
+```
+
+The sample rate is inferred from the most common time step (rounded to the nearest integer); pass `sample_rate=...` to set it explicitly. Only read pickle files you trust, since unpickling can run arbitrary code.
+
+### 📊 Processing a custom data frame
+You can also use the routines in `actipy.processing` to process an in-memory data frame, or for more fine-grained control:
 
 ```python
 import actipy.processing as P

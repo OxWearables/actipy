@@ -77,9 +77,28 @@ Output:
     ...
 
 
+CSV and pickle files
+....................
+:code:`actipy.read_device` also reads a CSV file (optionally compressed, e.g.
+:code:`.csv.gz`) or a pandas pickle (:code:`.pkl`) holding columns
+:code:`time,x,y,z`, and applies the same processing pipeline.
+
+.. code-block:: python
+
+    import actipy
+
+    data, info = actipy.read_device("sample.csv.gz")  # or "sample.pkl"
+
+    # CSV with differently named columns (given in time,x,y,z order)
+    data, info = actipy.read_device("sample.csv", csv_txyz="timestamp,ax,ay,az")
+
+The sample rate is inferred from the most common time step (rounded to the
+nearest integer); pass :code:`sample_rate` to set it explicitly. Only read
+pickle files from trusted sources, since unpickling can run arbitrary code.
+
 Custom data format
 ..................
-If you have data in another format (e.g. CSV) and still want to leverage the
+If you have data in another format and still want to leverage the
 data processing routines (low-pass filtering, calibration, non-wear detection
 and resampling), you can do it by converting your data to a Pandas dataframe and
 using :code:`actipy.process`.

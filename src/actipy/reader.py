@@ -11,6 +11,7 @@ Supported Devices
 - Actigraph (.gt3x files)
 - GENEActiv (.bin files)
 - Matrix (.bin files)
+- Generic time series (.csv and .pkl files with time, x, y, z)
 
 Main Functions
 --------------
@@ -71,6 +72,7 @@ __all__ = [
 Info = Dict[str, Any]
 Frequency = Optional[Union[int, float, bool]]
 ResampleFrequency = Optional[Union[Literal['uniform'], int, float, bool]]
+SampleRate = Optional[Union[int, float]]
 Timestamp = Optional[Union[str, datetime]]
 StreamColumns = Dict[str, NDArray[Any]]
 
@@ -137,6 +139,8 @@ def read_device(input_file: str,
                 start_first_complete_minute: bool = False,
                 calibrate_gravity_kwargs: Optional[CalibrateGravityOptions] = None,
                 flag_nonwear_kwargs: Optional[FlagNonwearOptions] = None,
+                sample_rate: SampleRate = None,
+                csv_txyz: str = 'time,x,y,z',
                 verbose: bool = True) -> Tuple[pd.DataFrame, Info]:
     """
     Read and process accelerometer device file.
@@ -145,8 +149,10 @@ def read_device(input_file: str,
     processing pipeline: file parsing, quality control, lowpass filtering,
     gravity calibration, nonwear detection, and resampling.
 
-    :param input_file: Path to accelerometer file (.cwa, .gt3x, .bin).
-        Compressed files (.gz, .zip) are automatically decompressed.
+    :param input_file: Path to accelerometer file (.cwa, .gt3x, .bin), or a
+        generic time series file (.csv, .pkl) with time, x, y, z data.
+        Compressed files (.gz, .zip) are automatically decompressed; CSV and
+        pickle files may also be compressed with .xz, .lzma, or .bz2.
     :type input_file: str
     :param lowpass_hz: Cutoff frequency (Hz) for Butterworth lowpass filter.
         Defaults to 20 Hz. Pass None or False to disable filtering.
@@ -181,6 +187,14 @@ def read_device(input_file: str,
     :param flag_nonwear_kwargs: Additional keyword arguments for the flag_nonwear
         function (e.g., {'patience': '60m'}). Defaults to None.
     :type flag_nonwear_kwargs: dict, optional
+    :param sample_rate: Sample rate (Hz) of a CSV or pickle input. If None,
+        it is inferred from the most common timestamp difference and rounded
+        to the nearest integer. Ignored for device files. Defaults to None.
+    :type sample_rate: int or float, optional
+    :param csv_txyz: Comma-separated names of the CSV time, x, y and z
+        columns, in that order. They are renamed to time, x, y, z. Ignored for
+        other file types. Defaults to 'time,x,y,z'.
+    :type csv_txyz: str, optional
     :param verbose: Print progress messages. Defaults to True.
     :type verbose: bool, optional
     :return: A tuple (data, info) where:
@@ -242,7 +256,12 @@ def read_device(input_file: str,
 
     Notes
     -----
-    - Supported formats: Axivity (.cwa), Actigraph (.gt3x), GENEActiv (.bin), Matrix (.bin)
+    - Supported formats: Axivity (.cwa), Actigraph (.gt3x), GENEActiv (.bin),
+      Matrix (.bin), and generic CSV (.csv) or pandas pickle (.pkl) files
+    - CSV files must have a header row; pickle files must hold a DataFrame
+      with a DateTimeIndex (or a 'time' column) and columns x, y, z
+    - Only read pickle files from trusted sources: unpickling can run
+      arbitrary code
     - Processing is memory-efficient using chunked operations for large files
     - The info dict is progressively updated as each processing step completes
     - Non-wear periods are set to NaN if detect_nonwear=True
@@ -251,7 +270,10 @@ def read_device(input_file: str,
     _validate_resample_frequency(resample_hz)
     timer = Timer(verbose)
 
-    data, info = _read_device(input_file, verbose)
+    if _tabular_file_type(input_file) is not None:
+        data, info = _read_tabular(input_file, sample_rate, csv_txyz, verbose)
+    else:
+        data, info = _read_device(input_file, verbose)
     sample_rate = cast(float, info['SampleRate'])
     read_errors = cast(int, info['ReadErrors'])
 
@@ -494,6 +516,96 @@ def _read_device(input_file: str, verbose: bool = True) -> Tuple[pd.DataFrame, I
             shutil.rmtree(tmpdir)
         except OSError as e:
             print(f"Error: {e.filename} - {e.strerror}.")
+
+
+def _tabular_file_type(input_file: str) -> Optional[str]:
+    """Return '.csv' or '.pkl' for (possibly compressed) tabular files."""
+
+    p = pathlib.Path(input_file)
+    ftype = p.suffix.lower()
+    if ftype in (".gz", ".xz", ".lzma", ".bz2", ".zip"):
+        ftype = pathlib.Path(p.stem).suffix.lower()
+    return ftype if ftype in (".csv", ".pkl") else None
+
+
+def _read_tabular(
+    input_file: str,
+    sample_rate: SampleRate = None,
+    csv_txyz: str = 'time,x,y,z',
+    verbose: bool = True,
+) -> Tuple[pd.DataFrame, Info]:
+    """Read a CSV or pickle time series and return data and metadata."""
+
+    timer = Timer(verbose)
+    ftype = _tabular_file_type(input_file)
+
+    info: Info = {}
+    info['Filename'] = input_file
+    info['Filesize(MB)'] = round(os.path.getsize(input_file) / (1024 * 1024), 1)
+    info['Device'] = f'unknown ({ftype})'
+    info['DeviceID'] = f'unknown ({ftype})'
+
+    timer.start("Reading file...")
+    if ftype == ".csv":
+        cols = [c.strip() for c in csv_txyz.split(',')]
+        if len(cols) != 4:
+            raise ValueError(
+                f"csv_txyz must be 4 comma-separated column names, got: '{csv_txyz}'"
+            )
+        tcol, xcol, ycol, zcol = cols
+        data = pd.read_csv(
+            input_file,
+            usecols=cols,
+            dtype={xcol: 'f4', ycol: 'f4', zcol: 'f4'},
+        )
+        data[tcol] = pd.to_datetime(data[tcol])
+        data = data.set_index(tcol)
+        data = data.rename(columns={xcol: 'x', ycol: 'y', zcol: 'z'})
+        data = data[['x', 'y', 'z']]
+    else:
+        data = pd.read_pickle(input_file)
+        if not isinstance(data, pd.DataFrame):
+            raise ValueError(
+                f"Pickle file must contain a pandas DataFrame, got {type(data).__name__}"
+            )
+        if not isinstance(data.index, pd.DatetimeIndex) and 'time' in data.columns:
+            data = data.set_index('time')
+            data.index = pd.to_datetime(data.index)
+        missing = [c for c in ('x', 'y', 'z') if c not in data.columns]
+        if missing:
+            raise ValueError(f"Pickle DataFrame is missing columns: {missing}")
+        if not isinstance(data.index, pd.DatetimeIndex):
+            raise ValueError(
+                "Pickle DataFrame must have a DateTimeIndex or a 'time' column"
+            )
+    data.index.name = 'time'
+    timer.stop()
+
+    if sample_rate is None or sample_rate == 0:
+        sample_rate = _infer_tabular_sample_rate(cast(pd.DatetimeIndex, data.index))
+
+    info['ReadOK'] = 1
+    info['ReadErrors'] = 0
+    info['SampleRate'] = float(sample_rate)
+
+    return data, info
+
+
+def _infer_tabular_sample_rate(t: pd.DatetimeIndex) -> int:
+    """Infer an integer sample rate from the most common timestamp difference."""
+
+    # Diff the datetime64 values directly so the result keeps the index's
+    # resolution (ns, us, ...) instead of assuming nanosecond integers.
+    tdiff = np.diff(t.to_numpy())
+    tdiff = tdiff[tdiff > np.timedelta64(0)]
+    if len(tdiff) == 0:
+        raise ValueError(
+            "Cannot infer sample rate from fewer than two distinct timestamps; "
+            "pass sample_rate explicitly."
+        )
+    values, counts = np.unique(tdiff, return_counts=True)
+    freq = pd.Timedelta(values[np.argmax(counts)])
+    return int(np.round(pd.Timedelta('1s') / freq))
 
 
 def _read_device_matrix(input_file: str, verbose: bool = True) -> Tuple[pd.DataFrame, Info]:
